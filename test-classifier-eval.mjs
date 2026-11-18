@@ -24,6 +24,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { setProjectEnabled } from './code-mode-settings.mjs';
 import { workerImageTag } from './worker-image.mjs';
+import { classifierPrompt } from './code-mode-classifier.mjs';
 
 const argv = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -326,6 +327,11 @@ try {
   await agent.close();
   mockModel.closeAllConnections?.(); await new Promise(resolve => mockModel.close(resolve));
   await mockTerm.close();
+  // O13 — sınıflandırıcı konteyner montajını bilir: docker izolasyonda proje
+  // /work altında bağlanır; mutlak /work/... yolu proje İÇİndedir (18 Kasım
+  // 2026 canlı doğrulamada bu bilgi yoktu, mutlak /work yolları ret yedi).
+  check(classifierPrompt.includes('/work'), 'O13: classifier prompt must document the docker /work project mount');
+  check(/inside the project/i.test(classifierPrompt), 'O13: /work must be documented as inside the project');
   report.offline.passed = failures.length === 0;
 
   // ================= CANLI KATMAN (ör. Qwen) — --offline değilse ==========

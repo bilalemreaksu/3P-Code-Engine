@@ -88,6 +88,24 @@ try {
   assert.ok(success.result.operations.some(item => item.operation === 'edit'));
   assert.match(success.response.content[1].text, /Yürütülen kod/);
   assert.match(success.response.content[1].text, /Önce/);
+  // Canlı yüzey ergonomisi (18 Kasım 2026 canlı doğrulama hatalarından):
+  // write eksik ara dizinleri kendisi oluşturur; izin kontrolü ÖNCE koşar ve
+  // reddedilen yazma hiçbir ağaç/dosya bırakmaz. run sonucu ok bayrağı taşır.
+  const nested = await call(`await write('nested/deep/file.txt', 'nested-ok'); return await read('nested/deep/file.txt');`);
+  assert.equal(nested.result.ok, true, nested.result.error);
+  assert.equal(await readFile(path.join(dir, 'nested/deep/file.txt'), 'utf8'), 'nested-ok');
+  await writeFile(policyPath, JSON.stringify({ deny: ['Write'] }));
+  const nestedDenied = await call(`await write('nested/deep2/other.txt', 'nope');`);
+  assert.match(nestedDenied.result.error, /policy denied Write/);
+  await assert.rejects(readFile(path.join(dir, 'nested/deep2/other.txt')), { code: 'ENOENT' });
+  const { stat: statFs } = await import('node:fs/promises');
+  await assert.rejects(statFs(path.join(dir, 'nested/deep2')), { code: 'ENOENT' });
+  await writeFile(policyPath, '{}');
+  const runFlags = await call(`const good = await run('node --version');
+    const bad = await run('exit 3');
+    return JSON.stringify({ goodOk: good.ok, badOk: bad.ok, goodExit: good.exitCode, badExit: bad.exitCode });`);
+  assert.equal(runFlags.result.ok, true, runFlags.result.error);
+  assert.deepEqual(JSON.parse(runFlags.result.result), { goodOk: true, badOk: false, goodExit: 0, badExit: 3 });
   const syntax = await call('const v = await $`Write-Output syntax-ok`.text(); ({value: v.trim(), check: $`Write-Output pass`.nothrow()});');
   assert.equal(syntax.result.ok, true); assert.match(syntax.result.result, /syntax-ok/); assert.match(syntax.result.result, /exitCode: 0/);
   const argument = await call('const item = "a; b"; const output = await $`Write-Output ${item}`.text(); output.trim();');

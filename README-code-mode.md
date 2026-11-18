@@ -385,9 +385,9 @@ Desktop uygulamasının kendi kısayollarını veya konuşma arayüzünü deği�
 Çağrı parametreleri: `cwd` (mutlak başlangıç dizini), `code` (JavaScript kodu), `timeoutMs` (1000-600000, varsayılan 600000), isteğe bağlı `sessionId`. `return` veya son üst seviye ifadeyi kullanabilirsiniz; Acorn AST ayrıştırıcısı noktalı virgülsüz geçerli JavaScript'i, yorumları ve template literal'ları korur. Her çağrı yeni bir QuickJS motorudur; normal değişkenler çağrılar arasında korunmaz. Aynı `sessionId` ile JSON `state` başarılı çağrılar arasında diske kaydedilir (en fazla 256 KiB). Kayıtlar geçici dosyaya yazılıp yeniden adlandırılarak atomik saklanır; hedefin geçici OS kilitlenmesi (Windows'ta gözlenen EPERM) ya da geçici dosyanın kaybı (ENOENT) kayıptan önce sınırlı sayıda denemede, her denemede taze bir geçici dosya ile aşılmaya çalışılır. Başarısız çağrılar yeni state'i kaydetmez; aynı oturuma eşzamanlı çağrı reddedilir. `code_session_delete` state'i temizler; aynı veri dizinini birden fazla sunucuyla eşzamanlı kullanmayın.
 
 - `await read(file)` — UTF-8 metin okur (1 MiB sınırı).
-- `await write(file, text)` — dosya oluşturur veya üzerine yazar.
+- `await write(file, text)` — dosya oluşturur veya üzerine yazar (eksik ara dizinleri otomatik oluşturur).
 - `await edit(file, oldText, newText)` — tam olarak bir kez eşleşen metni değiştirir.
-- `await run(command, {cwd, timeoutMs})` — Windows PowerShell komutu çalıştırır; `exitCode`, `stdout`, `stderr`, `timedOut`, `truncated` döner. Başarısız çıkış kodunu kodun kendisi kontrol etmelidir.
+- `await run(command, {cwd, timeoutMs})` — kabuk komutu çalıştırır (host'ta PowerShell, Docker konteynerinde `/bin/sh`); `ok`, `exitCode`, `stdout`, `stderr`, `timedOut`, `truncated` döner. Başarısız çıkış kodunu kodun kendisi kontrol etmelidir.
 - `log(...values)` — sonuca sınırlı günlük ekler.
 - `await callMcp(server, tool, args)` - aşağıda yapılandırılan bir stdio MCP sunucusunun aracını çağırır.
 - `await listMcpServers()` ve `await listMcpTools(server)` - yapılandırılmış stdio sunucularını ve araçlarını keşfeder.

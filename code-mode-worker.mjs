@@ -1,4 +1,4 @@
-import { readFile, writeFile, realpath, stat } from 'node:fs/promises';
+import { readFile, writeFile, realpath, stat, mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { inspect } from 'node:util';
@@ -103,7 +103,7 @@ async function run(command, { cwd = '.', timeoutMs = 60000 } = {}) {
       else child.kill('SIGKILL');
     }, effectiveTimeout);
     child.on('error', e => { clearTimeout(timer); reject(e); });
-    child.on('close', (exitCode, signal) => { clearTimeout(timer); resolve({ command: input.command, exitCode, signal, timedOut, truncated, stdout, stderr }); });
+    child.on('close', (exitCode, signal) => { clearTimeout(timer); resolve({ ok: exitCode === 0 && !timedOut, command: input.command, exitCode, signal, timedOut, truncated, stdout, stderr }); });
   });
 }
 
@@ -131,7 +131,9 @@ onMessage(async message => {
       // a hook replaced it, that replacement is what runs, is recorded and
       // was shown in any approval.
       read: async file => { const absolute = path.resolve(file); const { input, context } = await checkTool('Read', { file_path: absolute }); noteContext(context); if (typeof input?.file_path !== 'string' || !input.file_path) throw new Error('updated Read input must carry a file_path'); const content = await readFile(input.file_path, 'utf8'); if (content.length > 1024 * 1024) throw new Error('file exceeds 1 MiB'); record('read', { file: input.file_path }); return content; },
-      write: async (file, content) => { if (typeof content !== 'string') throw new Error('content must be a string'); const absolute = path.resolve(file); const { input, context } = await checkTool('Write', { file_path: absolute, content }); noteContext(context); if (typeof input?.file_path !== 'string' || !input.file_path || typeof input.content !== 'string') throw new Error('updated Write input must carry file_path and content'); await writeFile(input.file_path, input.content, 'utf8'); record('write', { file: input.file_path, bytes: Buffer.byteLength(input.content) }); return { file: input.file_path, bytes: Buffer.byteLength(input.content) }; },
+      write: async (file, content) => { if (typeof content !== 'string') throw new Error('content must be a string'); const absolute = path.resolve(file); const { input, context } = await checkTool('Write', { file_path: absolute, content }); noteContext(context); if (typeof input?.file_path !== 'string' || !input.file_path || typeof input.content !== 'string') throw new Error('updated Write input must carry file_path and content'); // Missing parent directories are created after the permission check: a
+      // denied write must not leave a directory tree behind.
+      await mkdir(path.dirname(input.file_path), { recursive: true }); await writeFile(input.file_path, input.content, 'utf8'); record('write', { file: input.file_path, bytes: Buffer.byteLength(input.content) }); return { file: input.file_path, bytes: Buffer.byteLength(input.content) }; },
       edit: async (file, oldText, newText) => {
         if (typeof oldText !== 'string' || !oldText || typeof newText !== 'string') throw new Error('edit requires a nonempty oldText and string newText');
         const absolute = path.resolve(file);
