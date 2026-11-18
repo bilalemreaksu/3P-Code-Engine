@@ -60,14 +60,25 @@ Gelecek sürüm/istemci değişikliklerinde yeniden doğrulama (aynı adımlar):
 
 1. `install-code-mode.ps1 -ConfigPath <mevcut-config>` ile kurun, uygulamayı
    yeniden başlatın ve `3p-code-mode` bağlantısını kontrol edin.
-2. Boş bir deneme klasöründe modele, `code_execute` ile dosya oluşturmasını,
+2. Canlı denetim politikasını yazın: kökteki varsayılan
+   `code-mode-policy.json` boş `{}` gelir; hook yolları makineye özel olduğu
+   için her kullanıcının kendi dosyasını oluşturması gerekir. Aşağıdaki komut
+   yolları o makinede üretir ve BOM'suz UTF-8 yazar:
+
+   ```powershell
+   $node = (Get-Command node).Source
+   $hook = (Resolve-Path 'live-verification\policy-hook.mjs').Path
+   $policy = @{ preToolUse = @(@{ tool = 'Write'; command = $node; args = @($hook) }); userPromptSubmit = @(@{ command = $node; args = @($hook) }) }
+   [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'code-mode-policy.json'), ($policy | ConvertTo-Json -Depth 5))
+   ```
+3. Boş bir deneme klasöründe modele, `code_execute` ile dosya oluşturmasını,
    okumasını, tek metin değişikliği yapmasını ve sonucu döndürmesini söyleyin.
-3. Güvenilen policy dosyasına `ask: ["Write"]` ekleyin; `code_status` içindeki
+4. Güvenilen policy dosyasına `ask: ["Write"]` ekleyin; `code_status` içindeki
    bağlantıyı tarayıcıda açıp bir kez reddedip bir kez kabul edin; diskteki
    etkileri karşılaştırın. Kararın denetim kaydında `fromUi: true` olarak
    göründüğünü `live-verification/verify-results.mjs` ile doğrulayın.
-4. `userPromptSubmit` hook'u ile deneme çıktısını engelleyin. `code_start` ve
+5. `userPromptSubmit` hook'u ile deneme çıktısını engelleyin. `code_start` ve
    `code_status` üzerinden yalnızca engelleme nedeni görünmelidir.
-5. Dönen iş kimliğiyle yerel transcript'i `--interactive` açın; Ctrl+O ve
+6. Dönen iş kimliğiyle yerel transcript'i `--interactive` açın; Ctrl+O ve
    Enter ile kodu görüntüleyin, `Q` ile çıkın. Aynı veri dizini ve izin moduyla
    oturumu yeniden açın.

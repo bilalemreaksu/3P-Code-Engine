@@ -48,10 +48,10 @@ async function classify(event, signal) {
 
 async function decide(kind, event, signal) {
   if (kind === 'classify') return classify(event, signal);
-  // 'approve' requests are handled by the execution manager through the local
-  // approval broker: a human answers in the broker UI (approval-broker.mjs).
-  // No MCP client capability is required and no MCP tool can grant the
-  // approval, so clients without elicitation support work unchanged.
+  // Unreachable in practice: the execution manager routes 'approve' requests
+  // to the local approval broker (queueApproval) — a human answers in the
+  // broker UI and no MCP tool can grant an approval. Fail closed if this
+  // invariant ever changes.
   throw new Error(`Code Mode policy requires interactive approval for ${event.tool_name}`);
 }
 const description = `Execute JavaScript in a fresh Node.js process with the current user's full OS permissions. NOT sandboxed: code and commands can read/write/delete files and access the network. Only use for tasks the user authorized. cwd must be an absolute project directory. Async APIs: read(file), write(file,text), edit(file,oldText,newText), run(command,{cwd,timeoutMs}), listMcpServers(), listMcpTools(server), callMcp(server,tool,args), log(...values), and tagged $ commands with .text()/.nothrow(). Return explicitly or end a semicolon-delimited script with an expression. Optional sessionId persists explicit JSON state; normal variables are not retained. Configured permission rules and hooks apply to helper calls. Approvals are answered by the user in the local approval UI (URL included in pending approvals); relay that URL to the user instead of attempting to answer it yourself. Recorded operations only cover the helper APIs, not direct Node.js or shell operations.`;

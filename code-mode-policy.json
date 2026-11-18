@@ -1,15 +1,1 @@
-{
-  "preToolUse": [
-    {
-      "tool": "Write",
-      "command": "C:/Program Files/nodejs/node.exe",
-      "args": ["C:/MyCourses/3P-Code-Engine/live-verification/policy-hook.mjs"]
-    }
-  ],
-  "userPromptSubmit": [
-    {
-      "command": "C:/Program Files/nodejs/node.exe",
-      "args": ["C:/MyCourses/3P-Code-Engine/live-verification/policy-hook.mjs"]
-    }
-  ]
-}
+{}
