@@ -5,9 +5,11 @@ import { inspect } from 'node:util';
 import { loadCodePolicy } from './code-mode-policy.mjs';
 import { mcpDefinitions, withMcp } from './code-mode-mcp.mjs';
 import { send as channelSend, connected, onMessage, disconnect } from './code-mode-channel.mjs';
+import { requestHost } from './code-mode-rpc.mjs';
+import { evaluateCode } from './code-mode-runtime.mjs';
 
-// This process runs trusted generated code with the user's operating-system
-// privileges. AsyncFunction is an execution mechanism, NOT a sandbox.
+// This trusted adapter owns OS access. Generated code runs in a QuickJS
+// WASM heap and reaches OS/MCP operations only through checked helpers.
 const OUTPUT_LIMIT = 64 * 1024;
 const cap = value => {
   const text = typeof value === 'string' ? value : inspect(value, { depth: 5, maxArrayLength: 100 });
@@ -18,6 +20,7 @@ const operations = [];
 let progressChars = 0;
 let progressTruncated = false;
 let checkTool;
+let hostPolicy = false;
 let holdOutput = false;
 let outputClosed = false;
 const heldEvents = [];
@@ -39,15 +42,21 @@ const sendFinal = result => new Promise(resolve => { if (!connected()) return re
 const record = (operation, details) => { if (operations.length < 100) { operations.push({ operation, ...details }); progress('operation', JSON.stringify({ operation, ...details })); } };
 const log = (...args) => { if (logs.length < 100) { const value = cap(args.map(a => cap(a)).join(' ')); logs.push(value); progress('log', value); } };
 
-async function listMcpServers() { return Object.keys(await mcpDefinitions()); }
+async function listMcpServers() { return hostPolicy ? requestHost('listMcpServers') : Object.keys(await mcpDefinitions()); }
 async function listMcpTools(serverName) {
   if (typeof serverName !== 'string') throw new Error('Invalid MCP server name');
+  if (hostPolicy) return requestHost('listMcpTools', { server: serverName });
   await checkTool('McpListTools', { server: serverName });
   return withMcp(serverName, client => client.listTools());
 }
 async function callMcp(serverName, toolName, args = {}) {
   if (typeof toolName !== 'string') throw new Error('Invalid MCP tool name');
   const argumentsSnapshot = JSON.parse(JSON.stringify(args));
+  if (hostPolicy) {
+    const result = await requestHost('callMcp', { server: serverName, tool: toolName, args: argumentsSnapshot });
+    record('mcp', { server: serverName, tool: toolName, isError: !!result.isError });
+    return result;
+  }
   await checkTool(`mcp__${serverName}__${toolName}`, argumentsSnapshot);
   return withMcp(serverName, async client => {
     const result = await client.callTool({ name: toolName, arguments: argumentsSnapshot });
@@ -84,53 +93,23 @@ async function run(command, { cwd = '.', timeoutMs = 60000 } = {}) {
   });
 }
 
-// Each interpolated value is one shell argument, not a shell fragment.
-const quoteArgument = value => process.platform === 'win32'
-  ? `'${String(value).replace(/'/g, "''")}'`
-  : `'${String(value).replace(/'/g, "'\\''")}'`;
-function $(strings, ...values) {
-  const command = strings.reduce((out, part, i) => out + part + (i < values.length ? quoteArgument(values[i]) : ''), '');
-  const promise = run(command).then(result => { record('run', { command: command.slice(0, 2000), exitCode: result.exitCode, timedOut: result.timedOut }); return result; });
-  const checked = () => promise.then(result => { if (result.exitCode !== 0 || result.timedOut) throw new Error(`Command failed (${result.exitCode}): ${result.stderr}`); return result; });
-  return { text: () => checked().then(result => result.stdout), nothrow: () => promise, then: (resolve, reject) => checked().then(resolve, reject) };
-}
-
-function prepareCode(code, names) {
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const trimmed = code.trim().replace(/;\s*$/, '');
-  const compile = body => new AsyncFunction(...names, body);
-  try { return compile(`return (\n${trimmed}\n);`); } catch { /* multiple statements */ }
-  // A syntactically valid prefix and a final expression after an explicit
-  // semicolon cover the documented example without guessing line boundaries.
-  for (let index = trimmed.lastIndexOf(';'); index >= 0; index = trimmed.lastIndexOf(';', index - 1)) {
-    const prefix = trimmed.slice(0, index + 1), tail = trimmed.slice(index + 1).trim();
-    if (!tail) continue;
-    try { compile(prefix); compile(`return (\n${tail}\n);`); return compile(`${prefix}\nreturn (\n${tail}\n);`); } catch { /* next boundary */ }
-  }
-  return compile(code);
-}
-
-async function settleNested(value, seen = new WeakSet(), depth = 0) {
-  value = await value;
-  if (!value || typeof value !== 'object' || depth >= 6 || (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype)) return value;
-  if (seen.has(value)) return '[Circular]';
-  seen.add(value);
-  const entries = await Promise.all(Object.entries(value).slice(0, 100).map(async ([key, item]) => [key, await settleNested(item, seen, depth + 1)]));
-  return Array.isArray(value) ? entries.map(([, item]) => item) : Object.fromEntries(entries);
-}
-
 onMessage(async message => {
   // Only the initial job message starts execution; decision replies
   // ({decisionId, allowed, error}) are consumed by the policy module's own
   // listener. The original used process.once; the channel listener is
   // persistent, so filter by shape instead.
   if (typeof message?.code !== 'string') return;
-  const { code, cwd, sessionId, mode, background = false, state = {}, policy } = message;
+  const { code, cwd, sessionId, mode, background = false, state = {}, policy, timeoutMs } = message;
   let result;
   try {
     process.chdir(await realpath(cwd));
     if (!(await stat('.')).isDirectory()) throw new Error('cwd must be a directory');
-    checkTool = await loadCodePolicy(process.cwd(), sessionId, mode, policy);
+    hostPolicy = message.hostPolicy === true;
+    // Isolated workers never receive the trusted policy or MCP configuration.
+    // Host-side checks also gate bridged calls and background output.
+    checkTool = hostPolicy
+      ? (tool, input) => requestHost('checkTool', { tool, input })
+      : await loadCodePolicy(process.cwd(), sessionId, mode, policy);
     holdOutput = background && checkTool.hasOutputHooks;
     await checkTool('REPL', { code });
     const tools = {
@@ -154,9 +133,9 @@ onMessage(async message => {
       log,
     };
     Object.assign(tools, { Read: tools.read, Write: tools.write, Edit: tools.edit, Bash: tools.run });
-    const names = ['tools', 'read', 'write', 'edit', 'run', 'log', 'state', 'callMcp', '$', 'listMcpServers', 'listMcpTools'];
-    const value = await settleNested(await prepareCode(code, names)(tools, tools.read, tools.write, tools.edit, tools.run, log, state, callMcp, $, listMcpServers, listMcpTools));
-    const stateJson = JSON.stringify(state);
+    const evaluated = await evaluateCode({ code, tools, state, timeoutMs });
+    const value = evaluated.value;
+    const stateJson = JSON.stringify(evaluated.state);
     if (typeof stateJson !== 'string' || Buffer.byteLength(stateJson) > 256 * 1024) throw new Error('state must be JSON serializable and at most 256 KiB');
     result = { ok: true, result: value === undefined ? null : cap(value), logs: cap(logs.join('\n')), operations, state: JSON.parse(stateJson) };
   } catch (error) {

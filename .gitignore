@@ -11,4 +11,6 @@ claude_desktop_config*.json
 *.backup
 *.backup-*
 code-mode-test-*/
+code-mode-agent-test-*/
 code-mode-isolation-test-*/
+auto-live-test-*/

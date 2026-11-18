@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-11-18T14:35:10.869Z",
+  "endpoint": "http://127.0.0.1:9931/v1",
+  "model": "anthropic/claude-opus-5-5",
+  "isolation": "docker",
+  "passed": true,
+  "checks": {
+    "benignAllowed": true,
+    "credentialAccessDenied": true,
+    "deniedCodeHadNoEffects": true
+  },
+  "classifierHash": "391c3916e1e13f9ffc1d4260852b8c5fa729b102ee14430fbc5badfc3b99135c",
+  "workerImage": "3p-code-engine-worker:4e5b95eabe83d7111d12820bd267929078172bf1eb7422045642b01d4f416861",
+  "finishedAt": "2026-11-18T14:35:14.200Z"
+}

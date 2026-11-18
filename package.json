@@ -1,6 +1,6 @@
 {
   "name": "3p-code-engine",
-  "version": "0.10.0",
+  "version": "0.12.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -9,13 +9,19 @@
   },
   "scripts": {
     "start": "node server-code-mode.mjs",
-    "test": "node test-code-mode.mjs && node test-code-mode-hooks.mjs && node test-approval.mjs && node test-review-engine.mjs && node test-installer.mjs && node test-code-mode-isolation.mjs",
+    "test": "node test-code-mode-runtime.mjs && node test-code-mode-agent.mjs && node test-code-mode.mjs && node test-code-mode-hooks.mjs && node test-code-mode-host.mjs && node test-approval.mjs && node test-review-engine.mjs && node test-installer.mjs && node test-worker-image.mjs && node test-code-mode-isolation.mjs",
+    "code": "node code-mode-cli.mjs",
+    "test:isolation:required": "node test-worker-image.mjs && node test-code-mode-isolation.mjs --require-docker",
+    "test:auto:live": "node test-auto-live.mjs",
+    "test:terminal:live": "node test-code-mode-agent-live.mjs",
     "transcript": "node code-mode-transcript.mjs",
     "review": "node review-cli.mjs",
     "review:fix": "node review-cycle-cli.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "acorn": "^8.19.0",
+    "quickjs-emscripten": "^0.32.0",
     "zod": "^4.6.7"
   }
 }

@@ -18,6 +18,9 @@ import { createServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { readAudit } from './approval-broker.mjs';
+import { workerImageTag } from './worker-image.mjs';
+
+const requireDocker = process.argv.includes('--require-docker') || process.env.CODE_MODE_REQUIRE_DOCKER === '1';
 
 const docker = (args, timeoutMs = 60000) => new Promise(resolve => {
   const child = spawn('docker', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -46,7 +49,11 @@ await mkdir(project);
 await writeFile(path.join(dir, 'secret.txt'), 'host-secret\n'); // sibling of the mounted project
 const policyPath = path.join(dir, 'policy.json');
 const mcpConfig = path.join(dir, 'mcp.json');
-await writeFile(mcpConfig, JSON.stringify({ mcpServers: {} }));
+await writeFile(mcpConfig, JSON.stringify({ mcpServers: {
+  fixture: { command: process.execPath, args: [path.join(process.cwd(), 'test-mcp-fixture.mjs')], env: { CONFIG_SENTINEL: 'host-only-config-canary' } },
+  disabled: { command: process.execPath, disabled: true },
+  '3p-code-mode': { command: process.execPath },
+} }));
 await writeFile(policyPath, '{}');
 await writeFile(path.join(project, 'approval-hook.mjs'), `let input = '';
 for await (const part of process.stdin) input += part;
@@ -139,17 +146,20 @@ finish(0, '', '');
 
 const engine = await docker(['version', '--format', '{{.Server.Version}}'], 8000);
 if (engine.code !== 0) {
-  console.log('SKIP: no docker engine on this machine; OS isolation test not run (not a pass)');
-  process.exit(0);
+  await rm(dir, { recursive: true, force: true });
+  console.log(`${requireDocker ? 'FAIL' : 'SKIP'}: no docker engine on this machine; OS isolation test not run (not a pass)`);
+  process.exit(requireDocker ? 1 : 0);
 }
 // Build the image (always: a stale image would test old worker code). An
 // engine that answers `version` but cannot build (for example a CI backend
 // without pull access) cannot prove the boundary either, so report SKIP with
 // the error instead of passing or failing on infrastructure.
-const built = await docker(['build', '-q', '-t', '3p-code-engine-worker', '-f', path.join(process.cwd(), 'worker-image', 'Dockerfile'), process.cwd()], 420000);
+const image = await workerImageTag();
+const built = await docker(['build', '-q', '-t', image, '-f', path.join(process.cwd(), 'worker-image', 'Dockerfile'), process.cwd()], 420000);
 if (built.code !== 0) {
-  console.log(`SKIP: docker engine present but the worker image could not be built: ${tail(built)} — OS isolation test not run (not a pass)`);
-  process.exit(0);
+  await rm(dir, { recursive: true, force: true });
+  console.log(`${requireDocker ? 'FAIL' : 'SKIP'}: docker engine present but the worker image could not be built: ${tail(built)} — OS isolation test not run (not a pass)`);
+  process.exit(requireDocker ? 1 : 0);
 }
 const dockerPs = () => docker(['ps', '-aq', '--filter', 'name=3p-worker-'], 15000).then(r => (r.code === 0 ? r.stdout : ''));
 
@@ -222,7 +232,7 @@ try {
       let secretAttempt;
       try { secretAttempt = 'LEAK:' + (await read('../secret.txt')); }
       catch (error) { secretAttempt = 'blocked(' + (error.code || error.message) + ')'; }
-      return JSON.stringify({ uname: uname.stdout.trim(), platform: process.platform, secretAttempt });`);
+      return JSON.stringify({ uname: uname.stdout.trim(), platform: (await run('node -p process.platform')).stdout.trim(), secretAttempt });`);
     assert.equal(job.result.ok, true, job.result.error);
     const facts = JSON.parse(job.result.result);
     assert.equal(facts.uname, 'Linux');
@@ -261,7 +271,7 @@ try {
   //    mounted project asks, the human (this test) answers on the broker UI
   //    surface, and the audited decision carries fromUi/channel.
   {
-    await writeFile(policyPath, JSON.stringify({ preToolUse: [{ tool: 'Write', command: '/usr/local/bin/node', args: ['/work/approval-hook.mjs'] }] }));
+    await writeFile(policyPath, JSON.stringify({ preToolUse: [{ tool: 'Write', command: process.execPath, args: [path.join(project, 'approval-hook.mjs')] }] }));
     const id = await start(`await write('approval-target.txt', 'isolated-approved\\n');
       return 'ISOLATION_APPROVAL_PASS';`);
     const pending = await waitFor(async () => (await pendingList()).find(item => item.tool === 'Write' && String(item.file ?? '').endsWith('approval-target.txt')), 'isolated approval request');
@@ -281,6 +291,7 @@ try {
   }
   // 5. Cancelling a job removes its container.
   {
+    await writeFile(policyPath, '{}');
     const before = (await dockerPs()).trim();
     const id = await start('await new Promise(resolve => setTimeout(resolve, 3600000));');
     await sleep(2500); // let the container boot
@@ -289,8 +300,66 @@ try {
     assert.equal(JSON.parse(cancelResponse.content[0].text).status, 'cancelled');
     await waitFor(async () => (await dockerPs()).trim() === before, 'container cleanup after cancel', 15000);
   }
+  // 6. MCP servers execute on the host, without exporting configuration or
+  //    credentials into the container. Deny also applies to forged raw RPCs.
+  {
+    const found = await call(`const servers = await listMcpServers();
+      const discoveredTools = await listMcpTools('fixture');
+      const echoed = await callMcp('fixture', 'echo', {message:'docker-mcp-pass'});
+      return JSON.stringify({servers, tools:discoveredTools.tools.map(t=>t.name), echo:echoed.content[0].text, sentinel:typeof process==='undefined' ? null : process.env.CONFIG_SENTINEL});`);
+    assert.equal(found.result.ok, true, found.result.error);
+    const facts = JSON.parse(found.result.result);
+    assert.deepEqual(facts.servers, ['fixture']);
+    assert.ok(facts.tools.includes('echo'));
+    assert.equal(facts.echo, 'docker-mcp-pass');
+    assert.equal(facts.sentinel, null);
+    const marker = path.join(dir, 'host-marker.txt');
+    const args = JSON.stringify({ file: marker, text: 'host-bridge-approved' });
+    await writeFile(policyPath, JSON.stringify({ deny: ['mcp__fixture__write_marker'] }));
+    const denied = await call(`const {requestHost} = await import('/app/code-mode-rpc.mjs');
+      return await requestHost('callMcp', {server:'fixture',tool:'write_marker',args:${args}});`);
+    assert.equal(denied.result.ok, false);
+    assert.match(denied.result.error, /module|import|loader/i);
+    const helperDenied=await call(`return await callMcp('fixture','write_marker',${args});`);
+    assert.match(helperDenied.result.error,/policy denied mcp__fixture__write_marker/);
+    await assert.rejects(access(marker), { code: 'ENOENT' });
+
+    await writeFile(policyPath, JSON.stringify({ ask: ['mcp__fixture__write_marker'] }));
+    const id = await start(`return (await callMcp('fixture','write_marker',${args})).content[0].text;`);
+    const pending = await waitFor(async () => (await pendingList()).find(item => item.jobId === id), 'bridged MCP approval');
+    await assert.rejects(access(marker), { code: 'ENOENT' });
+    assert.equal(await decideApproval(pending.nonce, 'approve'), 200);
+    assert.equal((await finished(id)).status, 'completed');
+    assert.equal(await readFile(marker, 'utf8'), 'host-bridge-approved');
+
+    // Trusted MCP hooks run on the host and are not recursively gated.
+    await writeFile(policyPath, JSON.stringify({ preToolUse: [{tool:'mcp__fixture__echo', type:'mcp_tool', server:'fixture', mcpTool:'hook_check', arguments:{mode:'error'}}] }));
+    const blocked = await call("return await callMcp('fixture','echo',{message:'blocked'});");
+    assert.equal(blocked.result.ok, false);
+    assert.match(blocked.result.error, /hook refused/);
+  }
+  // 7. Background output is held and checked on the host, including raw
+  //    protocol output emitted by untrusted code outside the log helper.
+  {
+    await writeFile(policyPath, JSON.stringify({ userPromptSubmit: [{ type:'mcp_tool', server:'fixture', mcpTool:'hook_check' }] }));
+    const id = await start(`log('withheld-secret');
+      await new Promise(r=>setTimeout(r,500)); state.secret='withheld-secret'; return 'withheld-secret';`);
+    let job;
+    do {
+      job = await poll(id);
+      assert.equal(job.events.length, 0);
+      if (job.status === 'running') await sleep(50);
+    } while (job.status === 'running');
+    assert.equal(job.result.outputBlocked, true);
+    const { transcript, ...visibleResult } = job.result;
+    assert.equal(JSON.stringify(visibleResult).includes('withheld-secret'), false);
+    assert.equal('state' in job.result, false);
+    assert.equal('logs' in job.result, false);
+    assert.equal('operations' in job.result, false);
+    await writeFile(policyPath, '{}');
+  }
   await stopBroker();
-  console.log(`PASS: docker isolation (engine ${engine.stdout.trim()}) — project boundary, host loopback unreachable, Linux guest, broker approval with fromUi audit, container cleanup`);
+  console.log(`PASS: docker isolation (engine ${engine.stdout.trim()}) — project boundary, host loopback unreachable, Linux guest, broker approval, MCP bridge deny/ask/hooks, host output filtering, container cleanup`);
 } finally {
   await stopBroker();
   await client.close().catch(() => {});

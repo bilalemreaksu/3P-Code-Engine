@@ -71,11 +71,13 @@ async function readResponse(response) {
   return body.trim() ? parseOutput(JSON.parse(body)) : {};
 }
 
-export async function runHooks(hooks, event) {
+export async function runHooks(hooks, event, externalSignal) {
   let ask = false;
   for (const hook of hooks) {
+    externalSignal?.throwIfAborted();
     if (event.hook_event_name === 'PreToolUse' && hook.tool !== '*' && hook.tool !== event.tool_name) continue;
-    const signal = AbortSignal.timeout(hook.timeoutMs ?? 5000);
+    const timeout = AbortSignal.timeout(hook.timeoutMs ?? 5000);
+    const signal = externalSignal ? AbortSignal.any([externalSignal, timeout]) : timeout;
     let output;
     try {
       const type = hook.type || 'command';
@@ -92,9 +94,11 @@ export async function runHooks(hooks, event) {
         output = parseOutput(result.structuredContent ?? (text.trim() ? JSON.parse(text) : {}));
       }
     } catch {
+      externalSignal?.throwIfAborted();
       if (hook.onFailure === 'continue') continue;
       throw new Error(`${event.hook_event_name} hook refused ${event.tool_name || 'code output'} or could not complete`);
     }
+    externalSignal?.throwIfAborted();
     if (output.decision === 'block' || output.continue === false || output.hookSpecificOutput?.permissionDecision === 'deny') {
       const reason = output.reason || output.stopReason || output.hookSpecificOutput?.permissionDecisionReason;
       throw new Error(`${event.hook_event_name} hook refused ${event.tool_name || 'code output'}${reason ? `: ${String(reason).slice(0, 2000)}` : ''}`);

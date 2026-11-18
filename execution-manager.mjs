@@ -5,12 +5,14 @@ import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getPermissionMode } from './code-mode-policy.mjs';
+import { StringDecoder } from 'node:string_decoder';
+import { getPermissionMode, policyCheck } from './code-mode-policy.mjs';
 import { approvalTimeoutMs, cancelDecision, createApprovalRequest, waitForDecision } from './approval-client.mjs';
+import { createHostBridge } from './code-mode-host.mjs';
+import { workerImageTag } from './worker-image.mjs';
 
 const worker = fileURLToPath(new URL('./code-mode-worker.mjs', import.meta.url));
 const engineDir = path.dirname(fileURLToPath(import.meta.url));
-const WORKER_IMAGE = '3p-code-engine-worker';
 const jobs = new Map(), sessions = new Map(), busy = new Set();
 let autoEpoch = 0;
 
@@ -59,45 +61,54 @@ function dockerRun(args, { timeoutMs } = {}) {
     });
   });
 }
-let imageReady;
-function ensureWorkerImage() {
-  imageReady ??= (async () => {
-    try { await dockerRun(['image', 'inspect', WORKER_IMAGE], { timeoutMs: 15000 }); return; }
+const imageBuilds = new Map();
+async function ensureWorkerImage() {
+  const image = await workerImageTag();
+  if (imageBuilds.has(image)) return imageBuilds.get(image);
+  const build = (async () => {
+    try { await dockerRun(['image', 'inspect', image], { timeoutMs: 15000 }); return image; }
     catch { /* first use: build the small worker image once */ }
-    await dockerRun(['build', '-q', '-t', WORKER_IMAGE, '-f', path.join(engineDir, 'worker-image', 'Dockerfile'), engineDir], { timeoutMs: 300000 });
+    await dockerRun(['build', '-q', '-t', image, '-f', path.join(engineDir, 'worker-image', 'Dockerfile'), engineDir], { timeoutMs: 300000 });
+    // Do not run an image built while its source inputs were changing.
+    if (await workerImageTag() !== image) throw new Error('Worker source changed during image build; retry the job');
+    return image;
   })().catch(error => {
     // A failure is transient (e.g. Docker Desktop stopped mid-session):
     // forget the cached rejection so the next job re-probes the engine
     // instead of replaying a stale error until the server restarts.
-    imageReady = undefined;
+    imageBuilds.delete(image);
     throw error;
   });
-  return imageReady;
+  imageBuilds.set(image, build);
+  return build;
 }
 isolationMode() === 'docker' && void ensureWorkerImage().catch(() => {});
-function spawnWorker(cwd, containerName) {
+function spawnWorker(cwd, containerName, image) {
   if (isolationMode() !== 'docker') return { child: fork(worker, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true }), isolated: false, container: undefined };
   const child = spawnDocker(['run', '-i', '--rm', '--init', '--name', containerName,
     '-v', `${cwd}:/work`, '-w', '/work',
     '-e', 'CODE_MODE_WORKER_TRANSPORT=stdio',
-    WORKER_IMAGE, 'node', '/app/code-mode-worker.mjs'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    image, 'node', '/app/code-mode-worker.mjs'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   return { child, isolated: true, container: containerName };
 }
 // The fork child delivers protocol messages over its IPC channel; the
 // docker child over stdout lines. User-code console.log noise (non-JSON
 // lines) is dropped on both ends.
-function onWorkerMessage(child, isolated, handler) {
+function onWorkerMessage(child, isolated, handler, fail) {
   if (!isolated) { child.on('message', handler); return; }
   let buffer = '';
+  const decoder = new StringDecoder('utf8');
   child.stdout.on('data', chunk => {
-    buffer += chunk.toString();
+    buffer += decoder.write(chunk);
     let index;
     while ((index = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, index);
       buffer = buffer.slice(index + 1);
+      if (Buffer.byteLength(line) > 2 * 1024 * 1024) { fail(new Error('Worker message exceeds 2 MiB')); return; }
       if (!line.trimStart().startsWith('{')) continue;
       try { handler(JSON.parse(line)); } catch { /* not a protocol line */ }
     }
+    if (Buffer.byteLength(buffer) > 2 * 1024 * 1024) fail(new Error('Worker message exceeds 2 MiB'));
   });
 }
 
@@ -215,7 +226,8 @@ export function resumeSession(id) {
   return { sessionId: id, ...metadata, running: busy.has(id) };
 }
 
-export async function startExecution({ cwd, code, timeoutMs = 120000, sessionId, decide, background = false }) {
+export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, background = false }) {
+  timeoutMs ??= background ? 7200000 : 600000;
   const mode = getPermissionMode();
   if (typeof code !== 'string' || !code.trim() || code.length > 65536) throw new Error('code must be 1..65536 characters');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > (background ? 7200000 : 600000)) throw new Error('Invalid execution timeout');
@@ -234,19 +246,27 @@ export async function startExecution({ cwd, code, timeoutMs = 120000, sessionId,
   if (sessionId && busy.has(sessionId)) throw new Error('Session already has an execution in progress');
   if (sessionId && !sessions.has(sessionId) && sessions.size >= 64) throw new Error('Session capacity reached');
   const isolation = isolationMode();
-  let policy;
-  if (isolation === 'docker') {
-    // First job pays the one-time image build (or reuse) cost.
-    await ensureWorkerImage();
-    // The worker cannot read host paths, so the policy travels with the
-    // job; hook scripts must live inside the mounted project.
-    const policyPath = process.env.CODE_MODE_POLICY_PATH || path.join(engineDir, 'code-mode-policy.json');
-    if (!path.isAbsolute(policyPath)) throw new Error('CODE_MODE_POLICY_PATH must be absolute');
-    policy = JSON.parse(await readFile(policyPath, 'utf8'));
-  }
-  const container = isolation === 'docker' ? `3p-worker-${randomUUID().replace(/-/g, '').slice(0, 24)}` : undefined;
-  const { child, isolated } = spawnWorker(cwd, container);
+  // Reserve before asynchronous image preparation so two starts cannot load
+  // the same state and later overwrite each other's session history.
   if (sessionId) busy.add(sessionId);
+  let policy, image;
+  const container = isolation === 'docker' ? `3p-worker-${randomUUID().replace(/-/g, '').slice(0, 24)}` : undefined;
+  let child, isolated;
+  try {
+    if (isolation === 'docker') {
+      // First job pays the one-time image build (or reuse) cost.
+      image = await ensureWorkerImage();
+      // Policy and hooks stay on the trusted host, beside the MCP config.
+      const policyPath = process.env.CODE_MODE_POLICY_PATH || path.join(engineDir, 'code-mode-policy.json');
+      if (!path.isAbsolute(policyPath)) throw new Error('CODE_MODE_POLICY_PATH must be absolute');
+      policy = JSON.parse(await readFile(policyPath, 'utf8'));
+      policyCheck(policy, cwd, sessionId, mode); // validate before starting any worker
+    }
+    ({ child, isolated } = spawnWorker(cwd, container, image));
+  } catch (error) {
+    if (sessionId) busy.delete(sessionId);
+    throw error;
+  }
   const id = randomUUID();
   for (const active of jobs.values()) active.approvalTimedOut = false;
   const job = { id, mode, background, cwd, status: 'running', startedAt: new Date().toISOString(), child, container, isolated, events: [], nextSequence: 1, permissions: new Map(), reviewValid: false };
@@ -254,8 +274,24 @@ export async function startExecution({ cwd, code, timeoutMs = 120000, sessionId,
   catch (e) { terminate(child, container); if (sessionId) busy.delete(sessionId); throw new Error(`Cannot persist job: ${e.message}`); }
   jobs.set(id, job);
   job.promise = new Promise(resolve => {
-    let settled = false;
+    let settled = false, finalizing = false;
     const controller = new AbortController();
+    const decideForJob = async (kind, event) => {
+      controller.signal.throwIfAborted();
+      if (kind === 'classify') {
+        const epoch = ++autoEpoch;
+        for (const active of jobs.values()) if (active.mode === 'auto') active.reviewValid = false;
+        if (!decide) throw new Error('Auto mode requires a classifier');
+        await decide('classify', event, controller.signal);
+        job.reviewValid = epoch === autoEpoch;
+      } else if (kind !== 'autoTool' || !job.reviewValid) {
+        await queueApproval(job, event, controller.signal);
+      }
+    };
+    const bridge = isolated ? createHostBridge({ policy, cwd, sessionId, mode, code, decide: decideForJob, signal: controller.signal }) : undefined;
+    const heldEvents = [];
+    const seenRequests = new Set();
+    let activeRequests = 0;
     const finish = (result, status) => {
       if (settled) return;
       settled = true; clearTimeout(timer);
@@ -273,27 +309,41 @@ export async function startExecution({ cwd, code, timeoutMs = 120000, sessionId,
       job.finishedAt = new Date().toISOString(); job.result = result;
       try { save('job', id, { id, status: job.status, startedAt: job.startedAt, finishedAt: job.finishedAt, result: job.result, events: job.events, nextSequence: job.nextSequence }); }
       catch (e) { result.persistenceWarning = `Job result could not be saved: ${e.message}`; }
-      delete job.child; void waitForExit(child).then(() => resolve(result));
+      delete job.child; void waitForExit(child).then(() => {
+        if (isolated && child.exitCode === null && child.signalCode === null) terminate(child, container);
+        resolve(result);
+      });
     };
     job.cancel = () => { terminate(child, container); finish({ ok: false, error: 'Execution cancelled; detached child processes may remain.' }, 'cancelled'); };
     const timer = setTimeout(() => { terminate(child, container); finish({ ok: false, error: 'Execution timed out; detached child processes may remain.' }, 'timed_out'); }, timeoutMs);
     let workerStderr = '';
     if (isolated) child.stderr.on('data', chunk => { workerStderr = (workerStderr + chunk.toString()).slice(-8192); });
     onWorkerMessage(child, isolated, result => {
+      if (isolated && result?.rpcId) {
+        if (settled || finalizing) return;
+        const rpcId = result.rpcId;
+        if (typeof rpcId !== 'string' || !/^[a-f0-9-]{36}$/.test(rpcId) || seenRequests.has(rpcId) || seenRequests.size >= 10000 || activeRequests >= 64) {
+          terminate(child, container); finish({ ok: false, error: 'Invalid or excessive host requests' }); return;
+        }
+        seenRequests.add(rpcId); activeRequests++;
+        void (async () => {
+          let reply;
+          try {
+            const value = await bridge.request(result.method, result.params);
+            if (Buffer.byteLength(JSON.stringify(value)) > 1024 * 1024) throw new Error('Host response exceeds 1 MiB');
+            reply = { rpcId, ok: true, value };
+          } catch (error) { reply = { rpcId, ok: false, error: error.message }; }
+          finally { activeRequests--; }
+          if (!settled && !finalizing) child.stdin.write(JSON.stringify(reply) + '\n', () => {});
+        })();
+        return;
+      }
       if (result?.decisionId && ['approve', 'classify', 'autoTool'].includes(result.kind)) {
-        if (settled) return;
+        if (settled || isolated) return;
         const reply = async () => {
           let error;
           try {
-            if (result.kind === 'classify') {
-              const epoch = ++autoEpoch;
-              for (const active of jobs.values()) if (active.mode === 'auto') active.reviewValid = false;
-              if (!decide) throw new Error('Auto mode requires a classifier');
-              await decide('classify', result.event, controller.signal);
-              job.reviewValid = epoch === autoEpoch;
-            } else if (result.kind !== 'autoTool' || !job.reviewValid) {
-              await queueApproval(job, result.event, controller.signal);
-            }
+            await decideForJob(result.kind, result.event);
           } catch (failure) { error = failure.message; }
           if (settled) return;
           const reply = { decisionId: result.decisionId, allowed: error === undefined, error };
@@ -306,21 +356,32 @@ export async function startExecution({ cwd, code, timeoutMs = 120000, sessionId,
         return;
       }
       if (result && result.__codeModeProgress === true) {
-        if (settled || !['stdout', 'stderr', 'log', 'operation', 'limit'].includes(result.kind) || typeof result.data !== 'string') return;
-        job.events.push({ sequence: job.nextSequence++, kind: result.kind, data: result.data.slice(0, 4096) });
-        if (job.events.length > 256) job.events.shift();
+        if (settled || finalizing || !['stdout', 'stderr', 'log', 'operation', 'limit'].includes(result.kind) || typeof result.data !== 'string') return;
+        const events = background && bridge?.hasOutputHooks ? heldEvents : job.events;
+        events.push({ sequence: job.nextSequence++, kind: result.kind, data: result.data.slice(0, 4096) });
+        if (events.length > 256) events.shift();
         return;
       }
-      if (result && typeof result.ok === 'boolean') finish(result);
-    });
+      if (result && typeof result.ok === 'boolean' && !settled && !finalizing) {
+        if (background && bridge?.hasOutputHooks) {
+          finalizing = true;
+          void bridge.checkOutput({ result, events: heldEvents }).then(() => {
+            if (settled) return;
+            job.events = heldEvents;
+            finish(result);
+          }, error => finish({ ok: false, outputBlocked: true, error: `Code output blocked: ${error.message}` }));
+        } else finish(result);
+      }
+    }, error => { terminate(child, container); finish({ ok: false, error: error.message }); });
     child.on('error', e => finish({ ok: false, error: isolated ? `Isolated worker could not start: ${e.message}` : e.message }));
-    child.on('exit', (code, signal) => finish({ ok: false, error: `${isolated ? 'Isolated ' : ''}worker exited without result: code=${code}, signal=${signal}${isolated && workerStderr.trim() ? ` stderr=${workerStderr.trim().slice(-2000)}` : ''}` }));
+    child.on('exit', (code, signal) => { if (!finalizing) finish({ ok: false, error: `${isolated ? 'Isolated ' : ''}worker exited without result: code=${code}, signal=${signal}${isolated && workerStderr.trim() ? ` stderr=${workerStderr.trim().slice(-2000)}` : ''}` }); });
     if (isolated) {
       // The worker chdirs to /work (the mounted project); absolute paths in
       // code resolve against the container root, not the host.
-      child.stdin.write(JSON.stringify({ code, cwd: '/work', sessionId, mode, background, state: saved?.state ?? {}, policy }) + '\n', error => { if (error) finish({ ok: false, error: `Isolated worker could not start: ${error.message}` }); });
+      child.stdin.on('error', error => { if (!settled && !finalizing) finish({ ok: false, error: `Worker channel failed: ${error.message}` }); });
+      child.stdin.write(JSON.stringify({ code, cwd: '/work', sessionId, mode, background, timeoutMs, state: saved?.state ?? {}, hostPolicy: true }) + '\n', error => { if (error) finish({ ok: false, error: `Isolated worker could not start: ${error.message}` }); });
     } else {
-      child.send({ code, cwd, sessionId, mode, background, state: saved?.state ?? {} }, error => { if (error) finish({ ok: false, error: error.message }); });
+      child.send({ code, cwd, sessionId, mode, background, timeoutMs, state: saved?.state ?? {} }, error => { if (error) finish({ ok: false, error: error.message }); });
     }
   });
   return job;

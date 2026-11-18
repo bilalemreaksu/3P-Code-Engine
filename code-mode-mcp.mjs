@@ -15,7 +15,7 @@ export async function withMcp(serverName, callback, signal) {
   if (typeof serverName !== 'string' || !Object.hasOwn(definitions, serverName)) throw new Error('MCP server is not configured');
   const config = definitions[serverName];
   if (!Array.isArray(config.args || [])) throw new Error('Invalid MCP server configuration');
-  const client = new Client({ name: '3p-code-mode-bridge', version: '0.10.0' });
+  const client = new Client({ name: '3p-code-mode-bridge', version: '0.11.0' });
   const transport = new StdioClientTransport({ command: config.command, args: config.args || [], ...(config.cwd ? { cwd: config.cwd } : {}), env: { ...getDefaultEnvironment(), ...(config.env || {}) }, stderr: 'ignore' });
   const abort = () => { void client.close().catch(() => {}); };
   signal?.throwIfAborted();

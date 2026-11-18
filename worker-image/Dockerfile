@@ -10,6 +10,6 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # Local modules the worker imports (worker, policy, hooks, mcp bridge).
-COPY code-mode-worker.mjs code-mode-policy.mjs code-mode-channel.mjs code-mode-hooks.mjs code-mode-mcp.mjs ./
+COPY code-mode-worker.mjs code-mode-policy.mjs code-mode-channel.mjs code-mode-hooks.mjs code-mode-mcp.mjs code-mode-rpc.mjs code-mode-runtime.mjs code-mode-rules.mjs ./
 
 ENV NODE_ENV=production

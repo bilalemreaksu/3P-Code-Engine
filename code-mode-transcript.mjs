@@ -35,7 +35,7 @@ export function renderViewer(state) {
       lines.push(`  ${safeText(job.result.error)}`);
       continue;
     }
-    for (const approval of job.pendingApprovals || []) lines.push(`  Onay bekleniyor: ${safeText(approval.tool)} · son tarih ${safeText(approval.deadline)} · code_status ile yanıtla`);
+    for (const approval of job.pendingApprovals || []) lines.push(`  Onay bekleniyor: ${safeText(approval.tool)} · son tarih ${safeText(approval.deadline)} · ${safeText(approval.url || 'Broker bağlantısı hazırlanıyor')}`);
     const record = formatRecord({ ...job.result, transcript: ' ' });
     lines.push(...record.split('\n').slice(3));
     if (job.result?.error) lines.push(`  Hata: ${safeText(job.result.error)}`);

@@ -4,6 +4,9 @@ param(
     [string]$NodePath,
     [string]$ModelEndpoint,
     [string]$ModelName,
+    [ValidateSet('rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions')][string]$PermissionMode = 'auto',
+    [string]$ClassifierEndpoint,
+    [string]$ClassifierModel,
     [ValidateSet('off', 'docker')][string]$Isolation = 'off'
 )
 $ErrorActionPreference = 'Stop'
@@ -27,10 +30,12 @@ if ($Isolation -eq 'docker') {
     if ($LASTEXITCODE -ne 0) { throw 'Docker motoru calismiyor; Docker Desktop acilin veya -Isolation off kullanin.' }
     Push-Location -LiteralPath $PSScriptRoot
     try {
-        & $dockerCommand.Source build -q -t 3p-code-engine-worker -f 'worker-image/Dockerfile' . 2>$null
+        $workerImage = & $NodePath (Join-Path $PSScriptRoot 'worker-image.mjs')
+        if ($LASTEXITCODE -ne 0) { throw 'Worker imaj hash degeri hesaplanamadi.' }
+        & $dockerCommand.Source build -q -t $workerImage -f 'worker-image/Dockerfile' . 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'Worker imaji derlenemedi; Docker, ag ve Dockerfile kontrol edin.' }
     } finally { Pop-Location }
-    Write-Host 'Worker imaji hazir: 3p-code-engine-worker'
+    Write-Host "Worker imaji hazir: $workerImage"
 }
 if (-not $ConfigPath) {
     $candidates = @()
@@ -63,11 +68,23 @@ try {
 $previous = $config.mcpServers.PSObject.Properties['3p-code-mode']
 $environment = [pscustomobject]@{}
 if ($previous -and $previous.Value.env -is [pscustomobject]) { $environment = $previous.Value.env }
+if (-not $ClassifierEndpoint) { $ClassifierEndpoint = $environment.CODE_MODE_CLASSIFIER_ENDPOINT }
+if (-not $ClassifierEndpoint) { $ClassifierEndpoint = $ModelEndpoint }
+if (-not $ClassifierEndpoint) { $ClassifierEndpoint = $environment.REVIEW_MODEL_ENDPOINT }
+if (-not $ClassifierModel) { $ClassifierModel = $environment.CODE_MODE_CLASSIFIER_MODEL }
+if (-not $ClassifierModel) { $ClassifierModel = $ModelName }
+if (-not $ClassifierModel) { $ClassifierModel = $environment.REVIEW_MODEL_NAME }
+if ($PermissionMode -eq 'auto' -and (-not $ClassifierEndpoint -or -not $ClassifierModel)) {
+    throw 'Auto varsayilandir: -ModelEndpoint ve -ModelName veya -ClassifierEndpoint ve -ClassifierModel belirtin. Insan onayli mod icin -PermissionMode default kullanin. Yapilandirma degistirilmedi.'
+}
 $environment | Add-Member -NotePropertyName CODE_MODE_MCP_CONFIG_PATH -NotePropertyValue $ConfigPath -Force
 if ($Isolation -eq 'docker') { $environment | Add-Member -NotePropertyName CODE_MODE_ISOLATION -NotePropertyValue 'docker' -Force }
 else { $environment.PSObject.Properties.Remove('CODE_MODE_ISOLATION') }
 if ($ModelEndpoint) { $environment | Add-Member -NotePropertyName REVIEW_MODEL_ENDPOINT -NotePropertyValue $ModelEndpoint -Force }
 if ($ModelName) { $environment | Add-Member -NotePropertyName REVIEW_MODEL_NAME -NotePropertyValue $ModelName -Force }
+if ($PermissionMode) { $environment | Add-Member -NotePropertyName CODE_MODE_PERMISSION_MODE -NotePropertyValue $PermissionMode -Force }
+if ($ClassifierEndpoint) { $environment | Add-Member -NotePropertyName CODE_MODE_CLASSIFIER_ENDPOINT -NotePropertyValue $ClassifierEndpoint -Force }
+if ($ClassifierModel) { $environment | Add-Member -NotePropertyName CODE_MODE_CLASSIFIER_MODEL -NotePropertyValue $ClassifierModel -Force }
 $entry = [pscustomobject]@{ command = $NodePath; args = @($server) }
 if (@($environment.PSObject.Properties).Count -gt 0) { $entry | Add-Member -NotePropertyName env -NotePropertyValue $environment }
 $config.mcpServers.PSObject.Properties.Remove('3p-code-engine-reader')
@@ -83,3 +100,5 @@ try {
 Write-Host "3p-code-mode eklendi: $ConfigPath"
 Write-Host "Yedek: $backup"
 Write-Host 'Claude Desktop uygulamasini tamamen kapatip yeniden acin.'
+Write-Host "Izin modu: $PermissionMode; JavaScript runtime: QuickJS (Node.js erisimi yok)."
+Write-Host "Terminal: node code-mode-cli.mjs --config `"$ConfigPath`""
