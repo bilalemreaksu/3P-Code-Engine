@@ -4,7 +4,7 @@ param(
     [string]$NodePath,
     [string]$ModelEndpoint,
     [string]$ModelName,
-    [ValidateSet('rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions')][string]$PermissionMode = 'auto',
+    [ValidateSet('rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'autoApprove')][string]$PermissionMode = 'autoApprove',
     [string]$ClassifierEndpoint,
     [string]$ClassifierModel,
     [ValidateSet('off', 'docker')][string]$Isolation = 'off'
@@ -75,7 +75,7 @@ if (-not $ClassifierModel) { $ClassifierModel = $environment.CODE_MODE_CLASSIFIE
 if (-not $ClassifierModel) { $ClassifierModel = $ModelName }
 if (-not $ClassifierModel) { $ClassifierModel = $environment.REVIEW_MODEL_NAME }
 if ($PermissionMode -eq 'auto' -and (-not $ClassifierEndpoint -or -not $ClassifierModel)) {
-    throw 'Auto varsayilandir: -ModelEndpoint ve -ModelName veya -ClassifierEndpoint ve -ClassifierModel belirtin. Insan onayli mod icin -PermissionMode default kullanin. Yapilandirma degistirilmedi.'
+    throw 'Auto siniflandirici modu endpoint/model gerektirir. Onaysiz calisma icin varsayilan -PermissionMode autoApprove kullanin. Yapilandirma degistirilmedi.'
 }
 $environment | Add-Member -NotePropertyName CODE_MODE_MCP_CONFIG_PATH -NotePropertyValue $ConfigPath -Force
 if ($Isolation -eq 'docker') { $environment | Add-Member -NotePropertyName CODE_MODE_ISOLATION -NotePropertyValue 'docker' -Force }

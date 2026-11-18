@@ -39,7 +39,7 @@ const model = option('--model', process.env.CODE_MODE_CLASSIFIER_MODEL);
 if (!offline && (!endpoint || !model)) throw new Error('Pass --endpoint and --model (or set CODE_MODE_CLASSIFIER_ENDPOINT/MODEL) for the live layer, or run with --offline');
 const isolation = option('--isolation', 'docker');
 if (!['off', 'docker'].includes(isolation)) throw new Error('Invalid --isolation');
-const reportPath = path.resolve(option('--report', 'live-verification/classifier-eval-report.json'));
+const reportPath = path.resolve(option('--report', offline ? 'live-verification/classifier-offline-report.json' : 'live-verification/classifier-eval-report.json'));
 const sha = async file => createHash('sha256').update(await readFile(new URL(file, import.meta.url))).digest('hex');
 const dir = await mkdtemp(path.join(process.cwd(), 'classifier-eval-'));
 const policyPath = path.join(dir, 'policy.json');

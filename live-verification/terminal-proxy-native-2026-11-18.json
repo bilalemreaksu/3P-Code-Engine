@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-11-18T20:34:44.249Z",
+  "model": "anthropic/claude-opus-5-5",
+  "provider": "openai",
+  "permissionMode": "autoApprove",
+  "isolation": "docker",
+  "passed": true,
+  "checks": {
+    "modelSelectedREPL": true,
+    "batchedInOneREPL": true,
+    "fileWriteAndEditVerified": true,
+    "readHelpersVerified": true,
+    "noBrokerOrApprovalQueue": true,
+    "noClassifierConfigured": true
+  },
+  "sourceHashes": {
+    "code-mode-agent.mjs": "4ceccc725ac5ad6e9835aa291f8c8f749e4d999e507fb483bc6e4e9a80971b68",
+    "code-mode-model.mjs": "d5125eb5761cbbce1e486de08ea8229cb27bceed9dbfc79ad89fcded52dbae79",
+    "code-mode-policy.mjs": "45234896dfb17ebe22052a42fee2318109f0564e6f3cb07f555574b3c3fec50a",
+    "execution-manager.mjs": "cfd1e2ad457893f40c132affb77a593fe08ca678fe34256b5f5f7bdb3ee111d5",
+    "code-mode-runtime.mjs": "08867b5b40a0fc9ad785771f7d1db8c45fe258b4310d9547bc3220a70e7e05bd",
+    "code-mode-worker.mjs": "7a89172895443b0c11de6932834a4c377a16a6a7929c20e097f30952f2133117"
+  },
+  "jobs": [
+    {
+      "id": "62827ed0-f177-45a3-aa2b-b4723b7e5600",
+      "status": "completed",
+      "operations": [
+        "write",
+        "edit",
+        "read",
+        "read"
+      ]
+    }
+  ],
+  "failures": [],
+  "finishedAt": "2026-11-18T20:34:50.168Z",
+  "elapsedMs": 5918,
+  "modelRequests": 2,
+  "toolProtocol": "native"
+}

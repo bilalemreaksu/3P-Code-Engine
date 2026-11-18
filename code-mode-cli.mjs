@@ -2,12 +2,13 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { emitKeypressEvents } from 'node:readline';
 import { pathToFileURL } from 'node:url';
+import { modelProviders, toolProtocols } from './code-mode-model.mjs';
 
 const safe = value => String(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, c=>JSON.stringify(c).slice(1,-1));
 
 export async function terminalOptions(argv, env = process.env) {
   const options = {};
-  const names = ['endpoint','model','api-key','cwd','resume','permission-mode','classifier-endpoint','classifier-model','isolation','config'];
+  const names = ['endpoint','model','api-key','cwd','resume','permission-mode','classifier-endpoint','classifier-model','isolation','config','provider','tool-protocol'];
   for (let i=0;i<argv.length;i++) {
     const key = argv[i].replace(/^--/,'');
     if (argv[i] === '--help') return {help:true};
@@ -25,7 +26,7 @@ export async function terminalOptions(argv, env = process.env) {
     // Explicit environment and command-line values take precedence.
     for (const [key,value] of Object.entries(configured)) if (/^(CODE_MODE_|REVIEW_MODEL_)/.test(key) && typeof value === 'string' && env[key] === undefined) env[key] = value;
   }
-  env.CODE_MODE_PERMISSION_MODE = options['permission-mode'] ?? env.CODE_MODE_PERMISSION_MODE ?? 'auto';
+  env.CODE_MODE_PERMISSION_MODE = options['permission-mode'] ?? env.CODE_MODE_PERMISSION_MODE ?? 'autoApprove';
   if (options.isolation) env.CODE_MODE_ISOLATION = options.isolation;
   const endpoint = options.endpoint ?? env.CODE_MODE_MODEL_ENDPOINT ?? env.REVIEW_MODEL_ENDPOINT ?? env.CODE_MODE_CLASSIFIER_ENDPOINT;
   const model = options.model ?? env.CODE_MODE_MODEL_NAME ?? env.REVIEW_MODEL_NAME ?? env.CODE_MODE_CLASSIFIER_MODEL;
@@ -36,9 +37,13 @@ export async function terminalOptions(argv, env = process.env) {
   // The enablement actions do not start a session and need no model settings.
   if (options.enable !== undefined) return {endpoint,model,apiKey,enable:options.enable,cwd:options.cwd ? path.resolve(options.cwd) : undefined};
   if (!endpoint || !model) throw new Error('Set --endpoint and --model, or load your Desktop configuration with --config');
-  if (!['rules','default','acceptEdits','plan','auto','bypassPermissions'].includes(env.CODE_MODE_PERMISSION_MODE)) throw new Error('Invalid permission mode');
+  if (!['rules','default','acceptEdits','plan','auto','bypassPermissions','autoApprove'].includes(env.CODE_MODE_PERMISSION_MODE)) throw new Error('Invalid permission mode');
   if (env.CODE_MODE_ISOLATION && !['off','docker'].includes(env.CODE_MODE_ISOLATION)) throw new Error('Invalid isolation mode');
-  return {endpoint,model,apiKey,permissionMode:options['permission-mode'],cwd:options.cwd ? path.resolve(options.cwd) : undefined,resume:options.resume};
+  const provider = options.provider ?? env.CODE_MODE_MODEL_PROVIDER;
+  const toolProtocol = options['tool-protocol'] ?? env.CODE_MODE_TOOL_PROTOCOL;
+  if (provider && !modelProviders.includes(provider)) throw new Error('Invalid model provider');
+  if (toolProtocol && !toolProtocols.includes(toolProtocol)) throw new Error('Invalid tool protocol');
+  return {endpoint,model,apiKey,provider,toolProtocol,permissionMode:options['permission-mode'],cwd:options.cwd ? path.resolve(options.cwd) : undefined,resume:options.resume};
 }
 
 export async function runTerminal(options, input = process.stdin, output = process.stdout) {
@@ -57,7 +62,7 @@ export async function runTerminal(options, input = process.stdin, output = proce
     if(frame!==lastFrame){lastFrame=frame;output.write(frame);}
   };
   const onEvent = event => {
-    if(event.kind==='assistant') append(event.text);
+    if(event.kind==='assistant' || event.kind==='protocol') append(event.text);
     if(event.kind==='operation') {
       try { const op=JSON.parse(event.data); append(`${op.operation}: ${op.file ?? op.command ?? op.server ?? ''}`); if(op.operation==='edit')append(`- ${op.oldText}\n+ ${op.newText}`); } catch {append(event.data);}
     } else if(['stdout','stderr','log'].includes(event.kind)) append(event.data);
@@ -132,14 +137,14 @@ export async function runTerminal(options, input = process.stdin, output = proce
   } finally {
     stopped=true;clearInterval(timer);controller?.abort();await agent.close();await currentTurn?.catch(()=>{});
     input.setRawMode(Boolean(wasRaw));input.pause();input.unref?.();
-    output.write(`\nDevam: node code-mode-cli.mjs --resume ${agent.id} --endpoint ${options.endpoint} --model ${options.model}\n`);
+    output.write(`\nDevam: node code-mode-cli.mjs --resume ${agent.id} --endpoint ${options.endpoint} --model ${options.model} --provider ${agent.provider}\n`);
   }
 }
 
 if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href){
   try {
     const options=await terminalOptions(process.argv.slice(2));
-    if(options.help)console.log('node code-mode-cli.mjs --endpoint <OpenAI-compatible URL> --model <model> [--permission-mode auto|default|acceptEdits|plan|bypassPermissions] [--cwd <project>] [--resume <id>] [--config <Desktop config>] [--isolation docker] | --enable|--disable [--cwd <project>]');
+    if(options.help)console.log('node code-mode-cli.mjs --endpoint <API base URL> --model <model> [--provider openai|anthropic|gemini] [--tool-protocol auto|native|text] [--permission-mode autoApprove|auto|default|acceptEdits|plan|bypassPermissions|rules] [--cwd <project>] [--resume <id>] [--config <Desktop config>] [--isolation docker] | --enable|--disable [--cwd <project>]');
     else if(options.enable!==undefined) {
       const { dataDir } = await import('./execution-manager.mjs');
       const { setProjectEnabled } = await import('./code-mode-settings.mjs');

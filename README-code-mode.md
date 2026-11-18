@@ -1,6 +1,14 @@
 # 3P Code Mode v0.12
 
-Claude Desktop 3P için deneysel MCP kod yürütme sunucusu ve [tam denetimli terminal oturumu](README-terminal.md). Model, tek çağrıda JavaScript yazar; kod asenkron işlemleri sırayla veya `Promise.all` ile paralel çalıştırabilir, sonuçları süzebilir, dosyaları değiştirebilir ve komut/test çalıştırabilir. Anthropic Code Mode'un ayrı bir uygulamasıdır; native Claude Code istemcisi değildir.
+MCP destekleyen yapay zekâ uygulamaları için kod yürütme sunucusu ve [terminal oturumu](README-terminal.md). Model, tek çağrıda JavaScript yazar; kod asenkron işlemleri sırayla veya `Promise.all` ile paralel çalıştırabilir, sonuçları süzebilir, dosyaları değiştirebilir ve komut/test çalıştırabilir. Anthropic Code Mode'un ayrı bir uygulamasıdır; native Claude Code istemcisi değildir.
+
+**Güncel varsayılan: `autoApprove`.** MCP, terminal ve kurulum scripti insan
+onayı istemez, sınıflandırıcı çağırmaz ve onay brokeri başlatmaz. `ask`
+kuralları ve hook'un `ask` kararı otomatik geçilir; açık `deny` ve engelleyen
+hook'lar uygulanır. Diğer izin modları yalnızca açıkça seçilirse kullanılır;
+aşağıdaki classifier/broker açıklamaları bu eski, isteğe bağlı modlar içindir.
+Önceden kurulmuş sunucu için scripti yeniden çalıştırıp istemciyi yeniden
+başlatın; mevcut açıkça yapılandırılmış mod kendiliğinden değiştirilmez.
 
 ## Önemli yetki sınırı
 
@@ -13,7 +21,7 @@ Bu kurulum scripti Windows içindir; her kullanıcı kendi hesabında çalışt�
 PowerShell'i projenin çıkarıldığı klasörde aç ve çalıştır:
 
 ```powershell
-.\install-code-mode.ps1 -ModelEndpoint 'http://127.0.0.1:9931/v1' -ModelName 'model-adi'
+.\install-code-mode.ps1
 ```
 
 Script mevcut `%LOCALAPPDATA%\Claude-3p\claude_desktop_config.json` ve `%APPDATA%\Claude\claude_desktop_config.json` dosyalarını arar. İkisi de mevcutsa yanlış profili seçmemek için `-ConfigPath` ister. Özel Node yolu için `-NodePath` kullanılabilir. Bir model sunucusu ve modeli belirlemek için isteğe bağlı:
@@ -204,14 +212,15 @@ değişmez ve hiçbir araç mod parametresi kabul etmez. Burada başlatılan her
 yürütme `source: 'mcp'` kaydeder: Desktop gerçek kullanıcı olayını bildiremez
 (kullanıcının gerçek eylemini modelin araç çağrısından ayırt edemez), bu yüzden
 süresi dolan onaylar bu yüzeyde yeniden kurulmaz ve iş bitene kadar ret olarak
-kalır. Kurulum scripti varsayılan olarak
-`auto` seçer; classifier verilmezse `ModelEndpoint`/`ModelName` veya kayıtlı
-model ayarları kullanılır. Endpoint/model yoksa yapılandırma yazılmaz.
-Doğrudan başlatılan MCP sunucusunda eski `rules` varsayılanı korunur.
+kalır. Kurulum scripti, doğrudan başlatılan MCP sunucusu ve yeni terminal
+oturumları varsayılan olarak `autoApprove` seçer. Bu mod endpoint/model veya
+classifier gerektirmez. Terminalin görevi üreten modeli ayrıca yapılandırılır.
+`auto` açıkça seçilirse classifier endpoint/model ayarları zorunludur.
 
 | Mod | Yardımcı çağrılara etkisi |
 | --- | --- |
-| `rules` (varsayılan) | Yapılandırılmış `deny`, `ask` ve hook'lar uygulanır; `allow` kuralları sessizce eşleşir. |
+| `autoApprove` (varsayılan) | Onay istemeden yürütür; classifier/broker çalışmaz. `ask` otomatik geçilir; açık `deny`, engelleyen hook ve çıktı hook'ları korunur. |
+| `rules` | Yapılandırılmış `deny`, `ask` ve hook'lar uygulanır; `allow` kuralları sessizce eşleşir. |
 | `default` | Yazma, düzenleme, kabuk ve dış MCP işlemleri onay ister; salt-okunur okumalar ve belgelenen salt-okunur kabut komutları onay istemez. |
 | `acceptEdits` | Dosya yazma ve düzenleme için modun ek onayı atlanır. Kabuk ve dış MCP işlemleri onay ister. |
 | `plan` | Yalnızca `Read`, `REPL` ve salt-okunur kabut komutları çalışabilir; kalan her şey reddedilir (hook ve `allow` kısıtı kaldıramaz). |
@@ -275,7 +284,7 @@ onay isteyen çağrılar da reddedilir. Yeni `code_execute`/`code_start` isteği
 bu süre aşımı kilidini kaldırır. `CODE_MODE_APPROVAL_TIMEOUT_MS` güvenilen
 sunucu ortamından 100–120000 ms arasında ayarlanabilir.
 
-### İnsan onayı (broker)
+### İsteğe bağlı eski modlarda insan onayı (broker)
 
 Onaylar, MCP istemcisinden bağımsız çalışan yerel bir onay brokeri
 (`approval-broker.mjs`) ile verilir. İlk onay gerekince broker, veri dizininde
@@ -298,7 +307,7 @@ kabul/red kararı yalnızca o sayfadan (broker kökeni doğrulanır) alınır.
   programlarının yetkileri ve Docker sınırı: [SECURITY.md](SECURITY.md).
 
 `review_changes`, `review_and_fix` ve `reviewAfter` kendi kabuk/model
-akışlarını kullanır; yalnızca `rules` veya `bypassPermissions` modlarında
+akışlarını kullanır; yalnızca `rules`, `bypassPermissions` veya `autoApprove` modlarında
 kullanılabilir. Code Mode yardımcı izinlerinin bunları denetlediği varsayılmamalıdır.
 
 ### OS izolasyonu (`CODE_MODE_ISOLATION=docker`)

@@ -23,7 +23,7 @@ if (process.platform !== 'win32') {
     assert.equal(after.mcpServers['3p-code-mode'].args[0], path.join(root, 'server-code-mode.mjs'));
     assert.equal(after.mcpServers['3p-code-mode'].env.EXISTING, 'preserved');
     assert.equal(after.mcpServers['3p-code-mode'].env.REVIEW_MODEL_NAME, 'local-model');
-    assert.equal(after.mcpServers['3p-code-mode'].env.CODE_MODE_PERMISSION_MODE, 'auto');
+    assert.equal(after.mcpServers['3p-code-mode'].env.CODE_MODE_PERMISSION_MODE, 'autoApprove');
     assert.equal(after.mcpServers['3p-code-mode'].env.CODE_MODE_CLASSIFIER_MODEL, 'local-model');
     assert.equal(after.mcpServers['3p-code-mode'].env.CODE_MODE_MCP_CONFIG_PATH, config);
     assert.equal((await readdir(dir)).filter(name => name.includes('.backup-code-mode-')).length, 2);
@@ -38,8 +38,14 @@ if (process.platform !== 'win32') {
     execFileSync('powershell.exe', autoInstall.slice(0, -4), { cwd: root, stdio: 'pipe', windowsHide: true });
     assert.equal(JSON.parse(await readFile(config,'utf8')).mcpServers['3p-code-mode'].env.CODE_MODE_CLASSIFIER_MODEL,'classifier');
     const emptyConfig=path.join(dir,'empty.json');await writeFile(emptyConfig,'{}');
-    assert.throws(()=>execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(root,'install-code-mode.ps1'),'-ConfigPath',emptyConfig,'-NodePath',process.execPath],{cwd:root,stdio:'pipe',windowsHide:true}));
-    assert.equal(await readFile(emptyConfig,'utf8'),'{}');
+    execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(root,'install-code-mode.ps1'),'-ConfigPath',emptyConfig,'-NodePath',process.execPath],{cwd:root,stdio:'pipe',windowsHide:true});
+    const noModelConfig = JSON.parse(await readFile(emptyConfig,'utf8'));
+    assert.equal(noModelConfig.mcpServers['3p-code-mode'].env.CODE_MODE_PERMISSION_MODE,'autoApprove');
+    assert.equal(noModelConfig.mcpServers['3p-code-mode'].env.CODE_MODE_CLASSIFIER_ENDPOINT,undefined);
+    const explicitAuto = ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(root,'install-code-mode.ps1'),'-ConfigPath',emptyConfig,'-NodePath',process.execPath,'-PermissionMode','auto'];
+    const beforeInvalid = await readFile(emptyConfig,'utf8');
+    assert.throws(()=>execFileSync('powershell.exe',explicitAuto,{cwd:root,stdio:'pipe',windowsHide:true}));
+    assert.equal(await readFile(emptyConfig,'utf8'),beforeInvalid);
     const local = path.join(dir, 'local'), roaming = path.join(dir, 'roaming');
     await mkdir(path.join(local, 'Claude-3p'), { recursive: true });
     await mkdir(path.join(roaming, 'Claude'), { recursive: true });

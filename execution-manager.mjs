@@ -268,8 +268,8 @@ export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, 
   source = source ?? 'mcp';
   if (typeof code !== 'string' || !code.trim() || code.length > 65536) throw new Error('code must be 1..65536 characters');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > (background ? 7200000 : 600000)) throw new Error('Invalid execution timeout');
-  if (background && !backgroundModes.includes(mode)) throw new Error('Background code requires rules, auto or bypassPermissions mode');
-  approvalTimeoutMs();
+  if (background && !backgroundModes.includes(mode)) throw new Error('Background code requires rules, auto or bypassPermissions mode (autoApprove is also supported)');
+  if (mode !== 'autoApprove') approvalTimeoutMs();
   const saved = sessionId ? getSession(sessionId) : undefined;
   cwd ??= saved?.cwd;
   if (!cwd || !path.isAbsolute(cwd)) throw new Error('cwd must be an absolute path for a new session');
@@ -316,6 +316,7 @@ export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, 
     const controller = new AbortController();
     const decideForJob = async (kind, event) => {
       controller.signal.throwIfAborted();
+      if (mode === 'autoApprove') return;
       if (kind === 'classify') {
         const epoch = ++autoEpoch;
         for (const active of jobs.values()) if (active.mode === 'auto') active.reviewValid = false;

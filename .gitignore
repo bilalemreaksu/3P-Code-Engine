@@ -12,5 +12,7 @@ claude_desktop_config*.json
 *.backup-*
 code-mode-test-*/
 code-mode-agent-test-*/
+code-mode-portable-test-*/
 code-mode-isolation-test-*/
 auto-live-test-*/
+live-verification/classifier-offline-report.json

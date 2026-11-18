@@ -67,6 +67,16 @@ try {
   assert.equal((await sourced.promise).result, '7');
   assert.equal(getJob(sourced.id).source, 'mcp');
 
+  // The execution timeout caps are enforced by the manager itself, not the
+  // caller: 10 minutes foreground, 2 hours background. A value one millisecond
+  // past the cap must be rejected; the cap itself stays executable.
+  await assert.rejects(async () => startExecution({ cwd: dir, code: 'return 1', timeoutMs: 600001 }), /Invalid execution timeout/);
+  await assert.rejects(async () => startExecution({ cwd: dir, code: 'return 1', background: true, timeoutMs: 7200001 }), /Invalid execution timeout/);
+  const capForeground = await startExecution({ cwd: dir, code: 'return 1', timeoutMs: 600000, mode: 'rules' });
+  assert.equal((await capForeground.promise).result, '1');
+  const capBackground = await startExecution({ cwd: dir, code: 'return 1', background: true, timeoutMs: 7200000, mode: 'rules' });
+  assert.equal((await capBackground.promise).result, '1');
+
   // A timed-out approval stays timed out: a new execution — even a synthetic
   // poll_event one — must not re-arm it. Only a real user message does.
   const retry = await startExecution({ cwd: dir, mode: 'default', decide: () => { throw new Error('no classifier'); }, code: `const errors = [];

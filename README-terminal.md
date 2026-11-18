@@ -12,17 +12,43 @@ npm ci
 npm run code -- --endpoint http://127.0.0.1:9931/v1 --model model-adi
 ```
 
-Varsayılan izin modu `auto` olur. Ayrı sınıflandırıcı verilmediyse aynı model
-ve uç nokta kod bloğunu çalıştırmadan önce bir kez inceler. Hata, bağlantı
-sorunu veya belirsiz cevap kodu çalıştırmaz. Araç kuralları ve hook'lar auto
-onayından sonra da uygulanır; çalışma anında hesaplanan dosya/komutlar
-araç denetimine girer. Yeni kodun sınıflandırılması önceki çalışan auto
-kodunun inceleme onayını kaldırır; gereken sonraki çağrılar insan onayı ister.
+Varsayılan izin modu `autoApprove` olur: classifier isteği, insan onay
+penceresi, onay kuyruğu ve broker başlangıcı yoktur. Aynı anda başlayan
+işler birbirinin onayını geçersizleştirmez. Açık `deny`, engelleyen hook'lar
+ve çıktı denetimi uygulanır. `ask` otomatik geçilir. Eski `auto` modu ayrıca
+seçilirse sınıflandırıcıyla çalışır ve bazı durumlarda insan onayı ister.
+
+## Model ve sağlayıcı seçimi
+
+Model adı için izin listesi yoktur. Üç API ailesi desteklenir:
+
+| `--provider` | `--endpoint` | Araç protokolü |
+| --- | --- | --- |
+| `openai` (varsayılan) | OpenAI uyumlu API tabanı, ör. `http://localhost:9931/v1` | Önce native function calling; açık desteklenmiyor hatasında bir kez metne geçiş |
+| `anthropic` | `https://api.anthropic.com/v1` | JSON metin protokolü, Messages API |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | JSON metin protokolü, generateContent API |
+
+```powershell
+npm run code -- --provider anthropic --endpoint https://api.anthropic.com/v1 --model MODEL_KIMLIGI
+npm run code -- --provider gemini --endpoint https://generativelanguage.googleapis.com/v1beta --model MODEL_KIMLIGI
+npm run code -- --endpoint http://localhost:9931/v1 --model YEREL_MODEL --tool-protocol text
+```
+
+API anahtarını `CODE_MODE_MODEL_API_KEY` ile verin. `--tool-protocol text`,
+function calling desteklemeyen veya tools alanını sessizce yok sayan
+modeller içindir. `native` yalnızca OpenAI uyumlu API'de kullanılabilir.
+Varsayılan `auto`, bağlantı/yetki/kota hatalarını başka protokolle tekrarlamaz.
+Sağlayıcı ve seçilen protokol oturumla saklanır; API anahtarı saklanmaz.
+
+Metin protokolünde model açık JSON çağrısı üretir; normal açıklamalar veya
+Markdown kod örnekleri çalıştırılmaz. Eksik JSON veya kesilmiş model cevabı
+çalıştırılmaz. Modelin doğru JSON/JavaScript üretme becerisi gerekir;
+sağlayıcı desteği her modelin aynı kalitede iş yapacağı garantisi değildir.
 
 Oturum kendi izin modunu taşır: başlangıç modu oturum açılırken yazılır, güncel
 mod çalışma anında değişebilir. `Shift+Tab` modu sırayla değiştirir, `/mode`
 güncel modu gösterir, `/mode <mod>` modu açıkça kurar; arka plan uygunluğu
-(`rules`, `auto`, `bypassPermissions`) modla birlikte yeniden hesaplanır ve
+(`autoApprove`, `rules`, `auto`, `bypassPermissions`) modla birlikte yeniden hesaplanır ve
 başlıkta görünür. Modu yalnızca terminaldeki insan değiştirebilir; modelin
 bu konuda aracı yoktur.
 
@@ -34,19 +60,19 @@ npm run code -- --config "$env:LOCALAPPDATA\Claude-3p\claude_desktop_config.json
 
 `--config` açıkça verilen dosyadaki `3p-code-mode.env` ayarlarını yükler;
 komut satırı ve önceden tanımlanmış ortam değişkenleri önceliklidir.
-Yapılandırmada izin modu varsa korunur; config olmadan terminal `auto`
-seçer. Model endpoint'i OpenAI uyumlu `/chat/completions` ve function tool
-calling desteklemelidir. API anahtarı için `CODE_MODE_MODEL_API_KEY`, ayrı
+Yapılandırmada izin modu varsa korunur; config olmadan terminal `autoApprove`
+seçer. Sağlayıcı için `CODE_MODE_MODEL_PROVIDER`, protokol için
+`CODE_MODE_TOOL_PROTOCOL` da kullanılabilir. API anahtarı için `CODE_MODE_MODEL_API_KEY`, ayrı
 classifier için `CODE_MODE_CLASSIFIER_API_KEY` ortam değişkeni kullanılabilir.
 
 İsteğe bağlı ayarlar:
 
 ```powershell
-npm run code -- --endpoint http://127.0.0.1:9931/v1 --model model-adi --permission-mode auto --isolation docker
+npm run code -- --endpoint http://127.0.0.1:9931/v1 --model model-adi --permission-mode autoApprove --isolation docker
 ```
 
 `--classifier-endpoint`, `--classifier-model`, `--cwd`, `--resume` ve
-`--permission-mode default|acceptEdits|plan|auto|bypassPermissions|rules`
+`--permission-mode autoApprove|default|acceptEdits|plan|auto|bypassPermissions|rules`
 desteklenir. Docker ayrıca kabuk süreçlerini proje mount'u olan Linux
 konteynerine taşır. Docker olmadan izin verilen kabuk komutları host
 hesabının yetkileriyle çalışır; JavaScript motoru yine QuickJS'tir.
@@ -54,7 +80,7 @@ hesabının yetkileriyle çalışır; JavaScript motoru yine QuickJS'tir.
 ## Etkinleştirme (bağımsız, güvenilen ayar)
 
 Code Mode'un bir projede **etkin** olması izin modu seçiminden ayrıdır:
-`auto` (varsayılan) modu seçmek özelliği açmaz. Oturum başlatmak için
+`autoApprove` (varsayılan) modu seçmek özelliği açmaz. Oturum başlatmak için
 proje, kullanıcı düzeyindeki güvenilen ayar dosyasında açıkça
 etkinleştirilmiş olmalıdır — proje dizinindeki hiçbir dosya Code Mode'u
 kendiliğinden açamaz:
@@ -81,7 +107,7 @@ npm run code -- --enable --cwd C:\Projects\app
 - Normal görünümde model mesajları, araç işlemleri ve edit önizlemeleri görünür.
 - `Ctrl+O` aynı terminalde transcript'i açar/kapatır. Code satırları başlangıçta
   daraltılmıştır; yukarı/aşağı ve Enter ile seçilip genişletilir.
-- `/status` iş durumlarını gösterir. İnsan onayı gerektiğinde onay sayfasının
+- `/status` iş durumlarını gösterir. Eski etkileşimli modlarda onay gerektiğinde onay sayfasının
   bağlantısı ve son tarih terminalde görünür; model karar veremez.
 - Model `background:true` ile uzun kodu başlatırsa konuşmaya devam edilebilir.
   Tamamlanma sonucu hook denetiminden sonra modele `poll_event` olarak verilir;
@@ -128,9 +154,17 @@ Claude Code'un bütün ayar şemasının birebir uygulaması sayılmaz.
 ## Gerçek model doğrulaması
 
 `npm run test:terminal:live -- --endpoint <url> --model <model>` gerçek
-modelin bu terminal agent'ında REPL seçmesini, auto onayıyla Docker içinde
-dosya yazma/düzenleme/okuma etkilerini doğrular. Rapor
-`live-verification/terminal-report.json` dosyasındadır. `test:auto:live`
-ayrıca zararsız yazmaya izin ve sentetik kimlik bilgisi çıkarmaya ret
+modelin bu terminal agent'ında tek REPL seçmesini, varsayılan `autoApprove`
+ile Docker içinde dosya yazma/düzenleme/okuma etkilerini, broker ve onay
+kuyruğu oluşmamasını doğrular. `--provider`, `--tool-protocol` ve
+`--permission-mode` ile diğer bağlantılar seçilebilir. Rapor varsayılan
+olarak `live-verification/terminal-report.json` dosyasındadır; `--report`
+ile ayrı dosya seçilebilir. Güncel yerel proxy modeliyle hem native hem
+metin protokolü doğrulandı:
+[native raporu](live-verification/autoapprove-native-report.json),
+[metin raporu](live-verification/autoapprove-text-report.json).
+Her rapor kaynak hash'leri, süre ve model istek sayısını taşır; tek modelin
+sonucu diğer modellere genellenmez. `test:auto:live`
+isteğe bağlı eski classifier modunda zararsız yazmaya izin ve sentetik kimlik bilgisi çıkarmaya ret
 senaryolarını çalıştırır. Bunlar sınırlı örneklerdir; bütün modellerle aynı
 karar kalitesi veya native Claude Code ile ürün eşitliği anlamına gelmez.

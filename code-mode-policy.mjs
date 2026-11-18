@@ -6,10 +6,10 @@ import { runHooks, validateHooks } from './code-mode-hooks.mjs';
 import { send as channelSend, onMessage } from './code-mode-channel.mjs';
 import { matchesRule, commandIsReadOnly } from './code-mode-rules.mjs';
 
-export const permissionModes = ['rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
-export const backgroundModes = ['rules', 'auto', 'bypassPermissions'];
+export const permissionModes = ['rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'autoApprove'];
+export const backgroundModes = ['rules', 'auto', 'bypassPermissions', 'autoApprove'];
 export function getPermissionMode() {
-  const mode = process.env.CODE_MODE_PERMISSION_MODE || 'rules';
+  const mode = process.env.CODE_MODE_PERMISSION_MODE || 'autoApprove';
   if (!permissionModes.includes(mode)) throw new Error('Invalid CODE_MODE_PERMISSION_MODE');
   return mode;
 }
@@ -121,7 +121,9 @@ export function policyCheck(policy, cwd, sessionId, mode, decide = requestDecisi
     const askRule = ask.some(rule => matchesRule(rule, tool, checked, cwd, 'ask'));
     const covered = hookDecision.allow || allow.some(rule => matchesRule(rule, tool, checked, cwd, 'allow'));
     const modeBaseline = !readOnly && (mode === 'default' || (mode === 'acceptEdits' && !edit));
-    if (hookDecision.ask || askRule || (!covered && modeBaseline)) await decide('approve', event);
+    // Unattended execution never starts the broker or calls a model to grant
+    // permission. Explicit deny and blocking hooks above still apply.
+    if (mode !== 'autoApprove' && (hookDecision.ask || askRule || (!covered && modeBaseline))) await decide('approve', event);
     if (mode === 'auto' && tool === 'REPL') await decide('classify', event);
     // Auto: the classifier reviewed the submitted code. A hook-changed
     // input is not covered by that review and gets a fresh decision.

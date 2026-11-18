@@ -5,6 +5,45 @@ ve [hook referansı](https://code.claude.com/docs/en/hooks) temel alınmıştır
 Bu proje, 3P/Desktop için bağımsız bir MCP sunucusudur. Claude Code ürününün
 kendi özellik bayrağını, hesap/model uygunluğunu veya arayüzünü uygulamaz.
 
+## Güncel çalışma biçimi
+
+İstenen onaysız çalışma için MCP, kurulum ve yeni terminal oturumlarında
+varsayılan `autoApprove` olur. Classifier ve insan onay brokeri çağrılmaz;
+`ask` kararları otomatik geçilir. Açık `deny` ve engelleyen hook'lar uygulanır.
+Mevcut yapılandırmada başka mod seçilmişse yeniden kurulum veya açık
+`--permission-mode autoApprove` ile değiştirin. Kaydedilmiş oturumlar kendi
+modlarını korur; resume ederken de açık mod seçilebilir.
+
+| Gereksinim | Uygulama ve doğrulama |
+| --- | --- |
+| Tek JavaScript ile sıralı/paralel araç çağrısı, sonuç süzme | QuickJS + Acorn, async yardımcılar, `Promise.all`; runtime testleri |
+| Onaysız ön plan, arka plan, dosya/kabuk/dış MCP | `autoApprove`; `test-code-mode-portable.mjs` gerçek dosya etkisi ve broker kaydı oluşmamasını denetler |
+| Model adına bağımlı olmama | Sabit model listesi yok; OpenAI uyumlu, Anthropic Messages, Gemini generateContent adaptörleri |
+| Native araç desteği olmayan model | JSON metin protokolü; OpenAI uyumlu API'de açık desteklenmiyor hatasında tek otomatik geçiş; `--tool-protocol text` ile doğrudan seçim |
+| API/protokol kanıtı | Üç sağlayıcı için kontrollü HTTP yanıtlarıyla gerçek ajan → yürütme → dosya → araç sonucu → model yanıtı → resume döngüsü; ücretli canlı API testi değildir |
+| Hız | Toplu ve paralel yardımcı çağrıları; varsayılanda ek classifier turu ve insan beklemesi yok. Gerçek toplam hız modele, API'ye ve komutlara bağlıdır; bütün modeller için benchmark iddiası yok |
+| Kayıt, Ctrl+O, arka plan, resume | Mevcut terminal, transcript ve bütünleşim testleri |
+| Native Claude Code ile ürün eşitliği | Yok: istemci arayüzü/yerleşik araçları, hesap kapıları, Remote Control ve bilgisayar kullanımı bu motorun parçası değildir |
+
+Güncel canlı kanıt: yerel OpenAI uyumlu proxy üzerinden
+`anthropic/claude-opus-5-5`, Docker ve `autoApprove` ile
+[native](live-verification/autoapprove-native-report.json) ve
+[metin](live-verification/autoapprove-text-report.json) protokollerinde tek
+REPL içinde yazma → düzenleme → iki okuma doğrulandı. Her iki rapor
+classifier yapılandırılmadığını, broker/onay kuyruğu oluşmadığını, kaynak
+hash'lerini ve model istek sayısını kaydeder. Bu, doğrudan Anthropic/Gemini
+API'lerinin veya bütün modellerin canlı doğrulaması değildir.
+
+MCP sunucusu kendi başına model API'sine ihtiyaç duymaz; MCP destekleyen
+istemcinin seçtiği modelle çalışır. Terminal, yukarıdaki üç API ailesinden
+birine ihtiyaç duyar. API erişimi olmayan uygulamalar ve geçerli kod/JSON
+üretemeyen modeller için "bütün yapay zekâlarda doğrulandı" denemez.
+
+Aşağıdaki ayrıntılı matris, önceki classifier/insan onay modlarının tarihsel
+uyumluluk kaydıdır. Bu modlar isteğe bağlı olarak korunur; onaysız varsayılanın
+gereksinimi değildir. Önceki canlı raporlar yeni adaptörlerin veya bugünkü
+kaynak değişikliklerinin canlı doğrulaması sayılmaz.
+
 ## v0.12 farkı
 
 [Terminal oturumu](README-terminal.md) modelin araç listesini denetler:
@@ -14,8 +53,8 @@ Desktop MCP desteği korunur; Desktop'ın yerleşik araçlarını değiştiremez
 
 JavaScript artık QuickJS WASM motorunda yürür; Node.js/prototype üzerinden
 host erişimi, dinamik Node import'u, doğrudan fetch ve protokol taklidi yoktur.
-Son ifade Acorn AST ile alınır. Auto kurulumu varsayılandır; ayrı classifier
-verilmezse yapılandırılmış model kullanılır; model yoksa kurulum durur.
+Son ifade Acorn AST ile alınır. Tarihsel `auto` kurulumu classifier gerektirirdi;
+güncel varsayılan `autoApprove` MCP kurulumunda model gerektirmez.
 Komut/dosya kapsamları ve MCP araç wildcard'ları desteklenir. İzin verilen
 kabuk programları için ayrıca Docker sınırı gerekir. Bu değişiklikler native
 Claude Code ürününün bütün istemci/ayar davranışlarında birebir uyum iddiası

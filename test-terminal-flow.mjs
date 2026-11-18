@@ -68,14 +68,20 @@ const model = createServer((req, res) => {
       if (content.startsWith('Background code output (poll_event):')) {
         message.content = content.includes('outputBlocked') ? 'Background job output was blocked.' : 'Background job reported: ok';
       } else if (content.includes('TFA1')) message.tool_calls = [replCall('write(\'flow-ok.txt\', \'terminal-flow-verified\')', false, index)];
+      else if (content.includes('TFA2')) message.tool_calls = [replCall("await write('flow-edit.txt', 'terminal-edit-before'); await edit('flow-edit.txt', 'terminal-edit-before', 'terminal-edit-after'); 'edited'", false, index)];
       else if (content.includes('TFB1')) message.tool_calls = [replCall("log('bg-running'); 'bg-ok'", true, index)];
+      else if (content.includes('TFB2')) message.tool_calls = [replCall("log('bg-slow-start'); await new Promise(r => setTimeout(r, 30000)); 'bg-slow'", true, index)];
       // The canary is composed at runtime: it must exist only in the
       // (blocked) output, never in the submitted code the transcript echoes.
       else if (content.includes('TFD1')) message.tool_calls = [replCall("log('canary' + '-secret-777'); 'bg-ok'", true, index)];
       else if (content.includes('TFC1')) message.tool_calls = [replCall('write(\'denied.txt\', \'nope\')', false, index)];
       else message.content = 'Restarted ok';
     } else if (last?.role === 'tool') {
-      message.content = content.includes('denied') ? 'The write was denied by the user.' : 'Done.';
+      // Unique per-step markers: the terminal redraws the whole conversation
+      // on every frame, so waits must never match a stale earlier line.
+      message.content = content.includes('denied') ? 'The write was denied by the user.'
+        : content.includes('terminal-edit-after') ? 'Flow file edited. TFA2-verified'
+        : 'Done.';
     } else {
       message.content = 'Done.';
     }
@@ -172,6 +178,17 @@ try {
   assert.equal(classifierCalls.length, 1, 'one REPL execution gets exactly one classification');
   assert.equal(classifierCalls.at(-1).userIntent, 'Create the flow file TFA1');
 
+  // S1b: the normal view (no Ctrl+O) renders the edit operation with its
+  // before/after diff lines, and the file effect is real.
+  mark = tty.get().length;
+  tty.typeLine('Edit the flow file TFA2');
+  await tty.until('TFA2-verified', mark);
+  assert.equal(await readFile(path.join(project, 'flow-edit.txt'), 'utf8'), 'terminal-edit-after');
+  const editView = tty.get().slice(mark);
+  assert.match(editView, /edit: .*flow-edit\.txt/, 'the edit operation line must render');
+  assert.match(editView, /- terminal-edit-before/, 'the before-text diff line must render');
+  assert.match(editView, /\+ terminal-edit-after/, 'the after-text diff line must render');
+
   // S2: background completion is delivered to the terminal and reaches the
   // model as a poll_event turn.
   mark = tty.get().length;
@@ -180,10 +197,46 @@ try {
   await tty.until('Background job reported: ok', mark);
   const jobId = tty.get().match(/Arka plan ([0-9a-f-]{8,})/)?.[1];
   assert.ok(jobId, 'the terminal must render the background job id');
-  assert.equal(classifierCalls.length, 2);
+  assert.equal(classifierCalls.length, 3, 'S1, S1b and the background job each get one classification');
   const pollCall = modelCalls.at(-1);
   assert.ok(String(pollCall.messages.at(-1).content).startsWith('Background code output (poll_event):'), 'background completion must reach the model as a poll_event');
   assert.ok(JSON.stringify(pollCall).includes('bg-ok'));
+
+  // S2b: Ctrl+C cancels a running background job and the terminal renders
+  // the final status; the cancelled result then reaches the model as a
+  // poll_event like any completion. Every redraw rewrites the whole
+  // conversation, so the new job line is detected on the current screen
+  // (after the last clear-home escape) by count, and the prompt line must be
+  // idle before Ctrl+C or the keypress would abort the in-flight turn.
+  const screen = () => tty.get().split(/\x1b\[2J\x1b\[H/).at(-1);
+  const jobLineCount = () => (screen().match(/arka plan · [0-9a-f-]{36}/g) ?? []).length;
+  const jobLinesBefore = jobLineCount();
+  mark = tty.get().length;
+  tty.typeLine('Start the slow background job TFB2');
+  {
+    const deadline = Date.now() + 20000;
+    while (jobLineCount() <= jobLinesBefore || !/(^|\n)Siz > \x1b\[K/.test(screen())) {
+      if (Date.now() > deadline) throw new Error('The slow background job turn did not finish');
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+  // The last rendered background job line is the one that just started.
+  const startLine = screen().match(/arka plan · ([0-9a-f-]{36})/g)?.at(-1);
+  assert.ok(startLine, 'the terminal must render the slow background job line');
+  const slowJobId = startLine.slice('arka plan · '.length);
+  tty.press('', { ctrl: true, name: 'c' });
+  await tty.until(`Arka plan ${slowJobId}: cancelled`, mark);
+  {
+    // The cancelled background job is delivered to the model as poll_event.
+    const deadline = Date.now() + 15000;
+    let poll;
+    for (;;) {
+      poll = [...modelCalls].reverse().find(call => String(call.messages.at(-1)?.content ?? '').startsWith('Background code output (poll_event):') && JSON.stringify(call).includes('cancelled'));
+      if (poll) break;
+      if (Date.now() > deadline) throw new Error('The cancelled background result never reached the model as a poll_event');
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
 
   // S3: Ctrl+O opens the transcript viewer (jobs with ids and status) and
   // toggles back to the conversation.

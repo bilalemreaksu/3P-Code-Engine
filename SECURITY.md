@@ -1,5 +1,10 @@
 # 3P Code Mode v0.12 — yetki sınırları
 
+Varsayılan `autoApprove`, insan onayı ve classifier olmadan yürütür; `ask`
+kuralları ve hook'un `ask` kararı otomatik geçilir. Açık `deny`, engelleyen
+hook'lar, çıktı denetimi ve QuickJS/Docker sınırları uygulanır. Broker ve
+classifier hakkındaki bölümler açıkça seçilen eski izin modları içindir.
+
 ## JavaScript motoru
 
 Üretilen JavaScript, `code-mode-runtime.mjs` içindeki QuickJS WebAssembly
@@ -32,7 +37,7 @@ izin verilmiş host kabuğunun mutlak olarak onay taklit edemeyeceği anlamına
 gelmez. Helper politikası OS sandbox'ı değildir.
 
 `review_changes`, `review_and_fix`, `reviewAfter` ayrı kabuk/model akışlarıdır;
-yalnızca rules/bypassPermissions modlarında kullanılabilir. Terminal agent
+yalnızca rules/bypassPermissions/autoApprove modlarında kullanılabilir. Terminal agent
 bunları modele sunmaz.
 
 ## Docker sınırı

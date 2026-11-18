@@ -11,7 +11,7 @@ import { dataDir, startExecution, getJob, cancelJob, deleteJob, deleteSession, r
 import { isolationSnapshot } from './approval-client.mjs';
 import { classifyCode } from './code-mode-classifier.mjs';
 
-const server = new McpServer({ name: '3p-code-mode', version: '0.12.0' }, {instructions:'Use code_execute for coding work: group related file, shell and MCP calls in JavaScript, use Promise.all for independent calls, and return only needed output. Use code_start for long-running tasks and code_status for results. JavaScript runs in QuickJS: Node.js globals, dynamic imports and direct network access are unavailable. All OS operations use the permission-checked helpers. Relay approval URLs to the human; never attempt to approve requests. Desktop clients decide whether to follow these instructions. The bundled terminal agent exposes only Code Mode tools.'});
+const server = new McpServer({ name: '3p-code-mode', version: '0.12.0' }, {instructions:'Use code_execute for coding work: group related file, shell and MCP calls in JavaScript, use Promise.all for independent calls, and return only needed output. Use code_start for long-running tasks and code_status for results. JavaScript runs in QuickJS: Node.js globals, dynamic imports and direct network access are unavailable. All OS operations use the checked helpers. Default autoApprove runs without a classifier or human approval prompts; explicit deny rules and blocking hooks still apply. Other explicitly configured permission modes may require human approvals. Desktop clients decide whether to follow these instructions. The bundled terminal agent exposes only Code Mode tools.'});
 
 // Record what the connecting MCP client actually supports. This is the
 // evidence for compatibility decisions: older code assumed clients offered
@@ -48,7 +48,7 @@ async function decide(kind, event, signal) {
   // invariant ever changes.
   throw new Error(`Code Mode policy requires interactive approval for ${event.tool_name}`);
 }
-const description = `Execute JavaScript in an isolated QuickJS WASM heap. Node.js globals, imports and direct network access are unavailable. Every OS/MCP operation uses permission-checked helpers. With CODE_MODE_ISOLATION=docker shell/file helpers run in a container; configured MCP tools and policy hooks run on the host through a checked bridge. Without Docker, permitted shell commands run with the current user's OS permissions. cwd must be an absolute project directory. Async APIs: read(file), write(file,text), edit(file,oldText,newText), run(command,{cwd,timeoutMs}), listMcpServers(), listMcpTools(server), callMcp(server,tool,args), log(...values), and tagged $ commands with .text()/.nothrow(). Return explicitly or end with an expression. Optional sessionId persists explicit JSON state; normal variables are not retained. Approvals are answered by the user in the local approval UI; relay its URL. Never attempt to answer it yourself. Recorded operations cover helpers; shell programs' internal actions are not individually recorded.`;
+const description = `Execute JavaScript in an isolated QuickJS WASM heap. Node.js globals, imports and direct network access are unavailable. Every OS/MCP operation uses checked helpers. With CODE_MODE_ISOLATION=docker shell/file helpers run in a container; configured MCP tools and policy hooks run on the host through a checked bridge. Without Docker, permitted shell commands run with the current user's OS permissions. cwd must be an absolute project directory. Async APIs: read(file), write(file,text), edit(file,oldText,newText), run(command,{cwd,timeoutMs}), listMcpServers(), listMcpTools(server), callMcp(server,tool,args), log(...values), and tagged $ commands with .text()/.nothrow(). Return explicitly or end with an expression. Optional sessionId persists explicit JSON state; normal variables are not retained. Default autoApprove executes without classifier calls, approval queues or human prompts. Deny rules and blocking hooks still apply. Recorded operations cover helpers; shell programs' internal actions are not individually recorded.`;
 
 server.registerTool('code_execute', {
   description,
@@ -57,7 +57,7 @@ server.registerTool('code_execute', {
 }, async ({ cwd, code, timeoutMs, reviewAfter, sessionId }, extra) => {
   let result;
   try {
-    if (reviewAfter && !['rules', 'bypassPermissions'].includes(getPermissionMode())) {
+    if (reviewAfter && !['rules', 'bypassPermissions', 'autoApprove'].includes(getPermissionMode())) {
       throw new Error('reviewAfter runs outside Code Mode permissions and is unavailable in this permission mode');
     }
     const job = await startExecution({ cwd, code, timeoutMs, sessionId, source: 'mcp',
@@ -81,7 +81,7 @@ server.registerTool('code_execute', {
 const response = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }, ...(formatRecord(value?.result) ? [{ type: 'text', text: formatRecord(value.result) }] : [])] });
 const jobError = e => ({ isError: true, content: [{ type: 'text', text: e.message }] });
 server.registerTool('code_start', {
-  description: "Start background JavaScript in QuickJS in rules, auto or bypassPermissions mode. Node.js globals/imports are unavailable. All OS/MCP operations use checked helpers; Docker additionally isolates file/shell operations. Without Docker, permitted shell programs have the host account's OS permissions. Use code_status to inspect progress; pending approvals are answered by the human in the local approval UI before their two-minute deadline. Output hooks may withhold output until completion. Completed results and explicit JSON state persist; running jobs do not resume after restart.",
+  description: "Start background JavaScript in QuickJS. Supported modes: autoApprove (default, no classifier or human prompts), rules, auto and bypassPermissions. Node.js globals/imports are unavailable. All OS/MCP operations use checked helpers; Docker additionally isolates file/shell operations. Without Docker, permitted shell programs have the host account's OS permissions. Use code_status to inspect progress. Output hooks may withhold output until completion. Completed results and explicit JSON state persist; running jobs do not resume after restart.",
   inputSchema: { cwd: z.string().min(1).max(2000).optional(), code: z.string().min(1).max(65536), timeoutMs: z.number().int().min(1000).max(7200000).default(7200000), sessionId: z.string().min(1).max(100).optional() },
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
 }, async args => {
@@ -96,7 +96,7 @@ server.registerTool('code_session_resume', {
   annotations: { readOnlyHint: true, openWorldHint: false },
 }, async ({ sessionId }) => { try { return response(resumeSession(sessionId)); } catch (e) { return jobError(e); } });
 server.registerTool('code_status', {
-  description: 'Poll a background job for output and helper events. Read-only: pending tool approvals are answered by the user in the local approval UI (URL included in pendingApprovals) and expire after two minutes; relaying the URL to the user is the only thing this tool can do about them. Pass afterSequence for new events. Output is bounded and may be withheld by hooks.',
+  description: 'Poll a background job for output and helper events. Pass afterSequence for new events. Output is bounded and may be withheld by hooks. Default autoApprove has no pending approvals. In explicitly configured interactive modes, pendingApprovals contains URLs for the human.',
   inputSchema: { jobId: z.string().uuid(), afterSequence: z.number().int().min(0).default(0) }, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
 }, async ({ jobId, afterSequence }) => {
   try { return response(getJob(jobId, afterSequence)); } catch (e) { return jobError(e); }
@@ -120,7 +120,7 @@ server.registerTool('review_and_fix', {
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
 }, async options => {
   try {
-    if (!['rules', 'bypassPermissions'].includes(getPermissionMode())) throw new Error('review_and_fix runs outside Code Mode permissions; use rules or bypassPermissions mode');
+    if (!['rules', 'bypassPermissions', 'autoApprove'].includes(getPermissionMode())) throw new Error('review_and_fix runs outside Code Mode permissions; use rules, bypassPermissions or autoApprove mode');
     const modelCall = openAIModel({ endpoint: process.env.REVIEW_MODEL_ENDPOINT, model: process.env.REVIEW_MODEL_NAME, apiKey: process.env.REVIEW_MODEL_API_KEY });
     const result = await runReviewCycle({ ...options, modelCall });
     return { isError: result.status !== 'reviewed', content: [{ type: 'text', text: JSON.stringify(result) }] };
@@ -133,7 +133,7 @@ server.registerTool('review_changes', {
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
 }, async ({ cwd, base, intent, mode, checkCommands, autoChecks }) => {
   try {
-    if (!['rules', 'bypassPermissions'].includes(getPermissionMode())) throw new Error('review_changes runs outside Code Mode permissions; use rules or bypassPermissions mode');
+    if (!['rules', 'bypassPermissions', 'autoApprove'].includes(getPermissionMode())) throw new Error('review_changes runs outside Code Mode permissions; use rules, bypassPermissions or autoApprove mode');
     const modelCall = openAIModel({ endpoint: process.env.REVIEW_MODEL_ENDPOINT, model: process.env.REVIEW_MODEL_NAME, apiKey: process.env.REVIEW_MODEL_API_KEY });
     const result = await reviewChange({ cwd, base, intent, mode, modelCall, checkCommands, autoChecks });
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
