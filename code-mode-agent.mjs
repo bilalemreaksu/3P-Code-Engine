@@ -78,7 +78,9 @@ export class CodeModeAgent {
     const payload = JSON.stringify({version:1,codeMode:true,id:this.id,cwd:this.cwd,mode:this.mode,messages:this.messages,jobs:this.jobs.slice(-100),backgroundJobs:[...this.backgroundJobs].slice(-100),deliveredBackground:[...this.deliveredBackground].slice(-100)});
     // A transient OS hiccup must not lose the saved conversation: the rename
     // can hit EPERM while the target is locked, or ENOENT when the temp file
-    // vanishes (both observed on Windows). Each attempt uses a fresh temp.
+    // vanishes (both observed on Windows). Each attempt uses a fresh temp;
+    // worst case 150+300+600+1200 = 2250 ms of async retries (largest single
+    // sleep 1200), then the error surfaces to the caller.
     for (let delay = 150; ; delay *= 2) {
       const temp = `${target}.${randomUUID()}.tmp`;
       try {

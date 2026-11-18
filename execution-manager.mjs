@@ -180,7 +180,8 @@ function save(kind, id, value) {
     writeFileSync(temp, JSON.stringify({ version: kind === 'session' ? 2 : 1, id, value }), { encoding: 'utf8', mode: 0o600 });
     // A rename can hit EPERM while the target is transiently locked (observed
     // on Windows); retry briefly instead of losing the record. The stall is
-    // synchronous but bounded and only happens on the error path.
+    // synchronous and only happens on the error path; worst case it blocks
+    // the event loop for 150+300+600+1200 = 2250 ms (largest single wait 1200).
     for (let delay = 150; ; delay *= 2) {
       try { renameSync(temp, target); break; }
       catch (error) {
