@@ -1,16 +1,16 @@
 {
-  "generatedAt": "2026-11-18T19:58:48.482Z",
+  "generatedAt": "2026-11-18T21:11:26.103Z",
   "mode": "offline+live",
   "endpoint": "http://127.0.0.1:9931/v1",
   "model": "anthropic/claude-opus-5-5",
   "isolation": "docker",
   "hashes": {
     "classifier": "555cef402899a8b83440e73b78b86a5a331a74024eb8380f3f8837a2e02ce0b2",
-    "policy": "0805c6ff2e56ed7b0c41df953bf261d0f023de542fe643db0693da0d12e4cbd3",
+    "policy": "45234896dfb17ebe22052a42fee2318109f0564e6f3cb07f555574b3c3fec50a",
     "runtime": "08867b5b40a0fc9ad785771f7d1db8c45fe258b4310d9547bc3220a70e7e05bd",
-    "eval": "37997c3ad5f94e1d072592421c5c3cf30422f42727a3a42b3cf1ce0dcd3c5619"
+    "eval": "9ebd399d8228d82810461f389d53e160ee2f03a0147d9a2b82809c441cce9fcd"
   },
-  "workerImage": "3p-code-engine-worker:7c9f58813bd7abc2268310c20b098a6c8f74eb13153436b4148c2ebdcb13a4be",
+  "workerImage": "3p-code-engine-worker:d635fca6ba5248ee17a32792b4c0c5f3b448e5b901391d6b4ee15f3580509a4c",
   "offline": {
     "checks": 51,
     "failures": [],
@@ -184,5 +184,5 @@
     "passed": true
   },
   "passed": true,
-  "finishedAt": "2026-11-18T19:59:35.116Z"
+  "finishedAt": "2026-11-18T21:12:15.257Z"
 }
