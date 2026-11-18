@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server-code-mode.mjs",
-    "test": "node test-code-mode-runtime.mjs && node test-code-mode-runtime-errors.mjs && node test-code-mode-agent.mjs && node test-code-mode-portable.mjs && node test-terminal-flow.mjs && node test-code-mode.mjs && node test-code-mode-hooks.mjs && node test-code-mode-host.mjs && node test-execution-manager.mjs && node test-code-mode-settings.mjs && node test-approval.mjs && node test-review-engine.mjs && node test-installer.mjs && node test-worker-image.mjs && node test-code-mode-isolation.mjs && node test-classifier-eval.mjs --offline --isolation off",
+    "test": "node test-code-mode-runtime.mjs && node test-code-mode-runtime-errors.mjs && node test-code-mode-agent.mjs && node test-code-mode-portable.mjs && node test-terminal-flow.mjs && node test-code-mode.mjs && node test-code-mode-hooks.mjs && node test-code-mode-policy.mjs && node test-code-mode-host.mjs && node test-execution-manager.mjs && node test-code-mode-settings.mjs && node test-approval.mjs && node test-review-engine.mjs && node test-installer.mjs && node test-worker-image.mjs && node test-code-mode-isolation.mjs && node test-classifier-eval.mjs --offline --isolation off",
     "code": "node code-mode-cli.mjs",
     "test:isolation:required": "node test-worker-image.mjs && node test-code-mode-isolation.mjs --require-docker",
     "test:classifier:eval": "node test-classifier-eval.mjs",

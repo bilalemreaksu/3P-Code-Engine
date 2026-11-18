@@ -1,1 +1,14 @@
-{}
+{
+  "deny": [
+    "Bash(*VDB*ALTER *)",
+    "Bash(*ALTER *VDB*)",
+    "Bash(*VDB*CREATE *)",
+    "Bash(*CREATE *VDB*)",
+    "Bash(*VDB*DROP *)",
+    "Bash(*DROP *VDB*)",
+    "Bash(*VDB*ADD COLUMN*)",
+    "Bash(*ADD COLUMN*VDB*)",
+    "Bash(*VDB*TRUNCATE*)",
+    "Bash(*TRUNCATE*VDB*)"
+  ]
+}
