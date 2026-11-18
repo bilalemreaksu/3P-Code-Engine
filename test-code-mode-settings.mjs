@@ -26,7 +26,10 @@ try {
   assert.equal(stored.version, 1);
   assert.ok(Object.values(stored.enabled).includes(true));
   assert.equal(isProjectEnabled(await loadSettings(dataDir), dir), true);
-  assert.equal(isProjectEnabled(await loadSettings(dataDir), dir + '\\'), true, 'trailing separator is the same project');
+  // path.sep: a trailing backslash is a separator on Windows but a literal
+  // file-name character on POSIX; the platform's own separator is the honest
+  // cross-platform form of "same project".
+  assert.equal(isProjectEnabled(await loadSettings(dataDir), dir + path.sep), true, 'trailing separator is the same project');
   assert.equal(path.join(dataDir, 'settings.json') === settingsPath(dataDir), true);
 
   // Disabling removes the project; re-enabling restores it.

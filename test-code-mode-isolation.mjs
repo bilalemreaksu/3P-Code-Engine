@@ -134,7 +134,9 @@ finish(0, '', '');
   const snapshot = JSON.parse(await waitFor(() => readFile(path.join(fakeData, 'isolation.json'), 'utf8'), 'fake isolation.json'));
   assert.equal(snapshot.isolationMode, 'docker');
   assert.equal(snapshot.dockerAvailable, false);
-  assert.equal(snapshot.workerIsolated, false);
+  // Without the engine the docker term contributes nothing; only the host's
+  // own environment (running in a container/WSL) may set workerIsolated.
+  assert.equal(snapshot.workerIsolated, snapshot.container || snapshot.wsl);
   await writeFile(stateFile, JSON.stringify({ down: false, runs: 0 }));
   const upResponse = await fakeClient.callTool({ name: 'code_execute', arguments: { cwd: project, code: '1 + 1' } });
   // Engine recovered: the image step now passes and the (fake) run was

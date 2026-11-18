@@ -79,7 +79,9 @@ try {
   const success = await call(`const [first, second] = await Promise.all([read('sample.txt'), read('sample.txt')]);
     await edit('sample.txt', 'before', 'after');
     await write('created.txt', first + second);
-    const test = await run('Write-Output code-mode-ok');
+    // Shell commands stay portable: echo/sleep/exit exist in both the
+    // Windows PowerShell and /bin/sh the worker spawns per platform.
+    const test = await run('echo code-mode-ok');
     return {text: await read('sample.txt'), exit: test.exitCode, version: test.stdout, error: test.stderr};`);
   assert.equal(success.result.ok, true);
   assert.match(success.result.result, /after/);
@@ -106,9 +108,9 @@ try {
     return JSON.stringify({ goodOk: good.ok, badOk: bad.ok, goodExit: good.exitCode, badExit: bad.exitCode });`);
   assert.equal(runFlags.result.ok, true, runFlags.result.error);
   assert.deepEqual(JSON.parse(runFlags.result.result), { goodOk: true, badOk: false, goodExit: 0, badExit: 3 });
-  const syntax = await call('const v = await $`Write-Output syntax-ok`.text(); ({value: v.trim(), check: $`Write-Output pass`.nothrow()});');
+  const syntax = await call('const v = await $`echo syntax-ok`.text(); ({value: v.trim(), check: $`echo pass`.nothrow()});');
   assert.equal(syntax.result.ok, true); assert.match(syntax.result.result, /syntax-ok/); assert.match(syntax.result.result, /exitCode: 0/);
-  const argument = await call('const item = "a; b"; const output = await $`Write-Output ${item}`.text(); output.trim();');
+  const argument = await call('const item = "a; b"; const output = await $`echo ${item}`.text(); output.trim();');
   assert.equal(argument.result.result, 'a; b');
   assert.equal((await call('await $`exit 7`.text();')).result.ok, false);
   assert.match((await call('await $`exit 7`.nothrow();')).result.result, /exitCode: 7/);
@@ -140,8 +142,8 @@ try {
   }
   assert.equal(await readFile(path.join(dir, 'sample.txt'), 'utf8'), 'after\n');
   assert.match((await call("await callMcp('fixture', 'echo');")).result.error, /policy denied mcp__fixture__echo/);
-  assert.match((await call('await $`Write-Output hook-blocked`.nothrow();', { sessionId: 'policy-test' })).result.error, /hook refused Bash/);
-  assert.equal((await call('await run("Write-Output permitted");', { sessionId: 'policy-test' })).result.ok, true);
+  assert.match((await call('await $`echo hook-blocked`.nothrow();', { sessionId: 'policy-test' })).result.error, /hook refused Bash/);
+  assert.equal((await call('await run("echo permitted");', { sessionId: 'policy-test' })).result.ok, true);
   {
     // Hook contract end to end: the updatedInput is the executed input —
     // file, record and model result all use it — and additionalContext
@@ -167,7 +169,7 @@ try {
   await writeFile(policyPath, '{}');
   assert.match((await call(`return await listMcpServers();`)).result.result, /fixture/);
   assert.match((await call(`return (await listMcpTools('fixture')).tools;`)).result.result, /echo/);
-  const started = await client.callTool({ name: 'code_start', arguments: { cwd: dir, code: `log('live-before-completion'); await run('Write-Output output-first; Start-Sleep -Milliseconds 1200; Write-Output output-last'); return 'background-ok';` } });
+  const started = await client.callTool({ name: 'code_start', arguments: { cwd: dir, code: `log('live-before-completion'); await run('echo output-first; sleep 1.2; echo output-last'); return 'background-ok';` } });
   const jobId = JSON.parse(started.content[0].text).id;
   let job, sawLive = false, sawStdout = false, sequence = 0;
   for (let i = 0; i < 100; i++) {

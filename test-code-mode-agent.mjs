@@ -140,11 +140,17 @@ try {
     const { chmodSync } = await import('node:fs');
     const { createHash } = await import('node:crypto');
     const target = path.join(process.env.CODE_MODE_DATA_DIR, `chat-${createHash('sha256').update(agent.id).digest('hex')}.json`);
-    chmodSync(target, 0o444);
+    // Windows refuses the rename over a read-only file (EPERM); POSIX allows
+    // it, so there the save directory goes unwritable instead: the fresh
+    // temp write fails with EACCES before any file is touched.
+    const windows = process.platform === 'win32';
+    if (windows) chmodSync(target, 0o444); else chmodSync(process.env.CODE_MODE_DATA_DIR, 0o555);
     try {
       input.emit('keypress','',{name:'tab',shift:true}); // setMode → fire-and-forget save
       await untilRendered('Oturum kaydedilemedi');
-    } finally { chmodSync(target, 0o600); }
+    } finally {
+      if (windows) { try { chmodSync(target, 0o600); } catch {} } else chmodSync(process.env.CODE_MODE_DATA_DIR, 0o700);
+    }
   }
   input.emit('keypress','/exit',{});input.emit('keypress','',{name:'return'});
   await ui;
