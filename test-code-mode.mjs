@@ -60,6 +60,14 @@ try {
   await setProjectEnabled(path.join(dir, 'saved-state'), os.tmpdir()); // the reviewAfter case runs there
   await client.connect(makeTransport());
   assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['code_cancel', 'code_execute', 'code_job_delete', 'code_session_delete', 'code_session_resume', 'code_start', 'code_status', 'review_and_fix', 'review_changes']);
+  // The descriptions must state that cwd is this tool's argument and is
+  // required for a new session; callers otherwise define cwd inside the code
+  // and the engine rejects the session.
+  const toolDescription = Object.fromEntries((await client.listTools()).tools.map(t => [t.name, t.description]));
+  for (const tool of ['code_execute', 'code_start']) {
+    assert.match(toolDescription[tool], /cwd argument/);
+    assert.match(toolDescription[tool], /required for a new session/);
+  }
   const call = async (code, extra = {}) => {
     const response = await client.callTool({ name: 'code_execute', arguments: { cwd: dir, code, ...extra } });
     return { response, result: JSON.parse(response.content[0].text) };
