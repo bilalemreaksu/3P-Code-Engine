@@ -1,9 +1,12 @@
 {
   "name": "3p-code-engine",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
+  "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node server-code-mode.mjs",
     "test": "node test-code-mode.mjs && node test-code-mode-hooks.mjs && node test-approval.mjs && node test-review-engine.mjs && node test-installer.mjs",
