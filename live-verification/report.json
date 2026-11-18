@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-18T12:45:01.016Z",
+  "generatedAt": "2026-11-18T13:04:55.001Z",
   "surface": "Claude Desktop 3P, local Code session",
   "desktopSessionId": "unknown",
   "passed": true,
@@ -17,9 +17,9 @@
     "valid": true,
     "decisions": [
       {
-        "ts": "2026-11-18T12:44:08.162Z",
-        "nonce": "6850e7c0da31dee93578eabac07c90c4e3135b9782b82a446fdf34bf04724d25",
-        "jobId": "f530fca6-24bf-4674-a6fb-246ecf96bb8f",
+        "ts": "2026-11-18T13:04:28.164Z",
+        "nonce": "eef8c3874bca622d58d5131342a61b60f5626125ea1bd18257b88c8940e6f924",
+        "jobId": "932db93a-89fa-4cbf-83c3-c49cd7d42d4c",
         "tool": "Write",
         "file": "C:\\MyCourses\\3P-Code-Engine\\live-verification\\desktop-approved.txt",
         "decision": "approve",
@@ -30,94 +30,52 @@
   },
   "jobs": [
     {
-      "id": "869cf9aa-aa4a-4797-a919-767b682708e7",
+      "id": "d1065cd9-3e73-42b6-bcd0-383b341580ce",
       "status": "completed",
-      "startedAt": "2026-11-18T12:04:13.096Z",
-      "finishedAt": "2026-11-18T12:04:13.298Z",
+      "startedAt": "2026-11-18T13:04:53.520Z",
+      "finishedAt": "2026-11-18T13:04:53.675Z",
       "outputBlocked": false
     },
     {
-      "id": "5dbb1541-f3e7-4e7a-9ea9-8698793db827",
-      "status": "cancelled",
-      "startedAt": "2026-11-18T12:04:13.947Z",
-      "finishedAt": "2026-11-18T12:04:16.621Z",
-      "outputBlocked": false
-    },
-    {
-      "id": "ea9dd958-a8c8-4377-bf68-2707bff52b12",
+      "id": "932db93a-89fa-4cbf-83c3-c49cd7d42d4c",
       "status": "completed",
-      "startedAt": "2026-11-18T12:43:12.374Z",
-      "finishedAt": "2026-11-18T12:43:12.569Z",
+      "startedAt": "2026-11-18T13:03:53.134Z",
+      "finishedAt": "2026-11-18T13:04:28.214Z",
       "outputBlocked": false
     },
     {
-      "id": "f2a4a2f7-6180-4287-bf1a-a2a62221104b",
+      "id": "9e5e59c0-d411-4e8a-a47b-6b2ce1c4b97c",
+      "status": "completed",
+      "startedAt": "2026-11-18T13:03:26.432Z",
+      "finishedAt": "2026-11-18T13:03:28.651Z",
+      "outputBlocked": false
+    },
+    {
+      "id": "ee8ed89b-400d-4003-b9a4-d84a736ef31f",
       "status": "failed",
-      "startedAt": "2026-11-18T12:04:13.633Z",
-      "finishedAt": "2026-11-18T12:04:13.834Z",
+      "startedAt": "2026-11-18T13:03:46.907Z",
+      "finishedAt": "2026-11-18T13:03:47.146Z",
       "outputBlocked": true
     },
     {
-      "id": "bea72cb7-d866-439c-9a20-0c8399a62998",
+      "id": "7d12894e-831d-412a-b183-f4c5a4a74dbd",
       "status": "cancelled",
-      "startedAt": "2026-11-18T12:43:16.505Z",
-      "finishedAt": "2026-11-18T12:43:18.399Z",
+      "startedAt": "2026-11-18T13:03:47.223Z",
+      "finishedAt": "2026-11-18T13:03:48.883Z",
       "outputBlocked": false
     },
     {
-      "id": "72f313a3-8305-4618-8d32-c6fa3ccbfc20",
+      "id": "2bfae9c3-90da-49d1-8ffa-d5681a671a5e",
       "status": "completed",
-      "startedAt": "2026-11-18T12:02:24.930Z",
-      "finishedAt": "2026-11-18T12:02:26.591Z",
+      "startedAt": "2026-11-18T13:03:21.751Z",
+      "finishedAt": "2026-11-18T13:03:21.960Z",
       "outputBlocked": false
     },
     {
-      "id": "7781ba58-b251-428e-89a6-67ef91b7b710",
+      "id": "31b96f0e-7981-473d-bf93-8d5fca462687",
       "status": "completed",
-      "startedAt": "2026-11-18T12:01:12.021Z",
-      "finishedAt": "2026-11-18T12:01:12.175Z",
-      "outputBlocked": false
-    },
-    {
-      "id": "1c314f3e-1041-49f7-82c3-1c3139c91936",
-      "status": "completed",
-      "startedAt": "2026-11-18T12:43:15.537Z",
-      "finishedAt": "2026-11-18T12:43:15.737Z",
-      "outputBlocked": false
-    },
-    {
-      "id": "382ff0b4-7cba-4f9a-ab90-25fb0a490653",
-      "status": "completed",
-      "startedAt": "2026-11-18T12:43:11.850Z",
-      "finishedAt": "2026-11-18T12:43:12.053Z",
-      "outputBlocked": false
-    },
-    {
-      "id": "fd99b947-a3dd-4986-a43d-51e2fae03449",
-      "status": "failed",
-      "startedAt": "2026-11-18T12:43:16.034Z",
-      "finishedAt": "2026-11-18T12:43:16.231Z",
-      "outputBlocked": true
-    },
-    {
-      "id": "680811ac-6bd2-4516-9b58-24b2c8750824",
-      "status": "completed",
-      "startedAt": "2026-11-18T12:02:27.825Z",
-      "finishedAt": "2026-11-18T12:02:27.974Z",
-      "outputBlocked": false
-    },
-    {
-      "id": "9bd509eb-91ab-4fbf-9d70-ed7f8e85cda2",
-      "status": "cancelled",
-      "startedAt": "2026-11-18T12:44:47.849Z",
-      "finishedAt": "2026-11-18T12:44:59.480Z",
-      "outputBlocked": false
-    },
-    {
-      "id": "f530fca6-24bf-4674-a6fb-246ecf96bb8f",
-      "status": "completed",
-      "startedAt": "2026-11-18T12:43:22.178Z",
-      "finishedAt": "2026-11-18T12:44:08.208Z",
+      "startedAt": "2026-11-18T13:03:46.393Z",
+      "finishedAt": "2026-11-18T13:03:46.591Z",
       "outputBlocked": false
     }
   ]
