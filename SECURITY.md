@@ -89,8 +89,10 @@ Bu depoda `CODE_MODE_ISOLATION=docker` değeriyle uygulandı ve
 ### Docker backend'i
 
 Her iş tek kullanımlık bir konteynerde koşar: imaj `3p-code-engine-worker`
-(`worker-image/Dockerfile`; ilk iş bir kez derler, imaj `npm ci` ile
-kurulur). Sunucu `docker run --rm` ile konuk başlatır; worker protokolü fork
+(`worker-image/Dockerfile`, taban `node:24-slim`; ilk iş bir kez derler,
+imaj `npm ci` ile kurulur). Motor **Linux konteynerleri** çalıştırmalıdır
+(Docker Desktop WSL2 backend'i); saf Windows container engine'inde imaj
+derlenemez ve izolasyon etkin sayılmaz. Sunucu `docker run --rm` ile konuk başlatır; worker protokolü fork
 IPC yerine stdio üzerinden satır bazlı JSON taşır (`code-mode-channel.mjs`).
 Kurulum: `.\install-code-mode.ps1 -Isolation docker` (motoru doğrular,
 imajı önden derler, `CODE_MODE_ISOLATION=docker`'i Desktop ortamına yazar).

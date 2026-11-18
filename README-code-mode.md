@@ -171,7 +171,11 @@ konteynerden erişilemez, konuk kabuk Linux'tur. Tehdit modeli ve kalan
 riskler [SECURITY.md](SECURITY.md) dosyasındaki "Sert sınır" bölümünde
 belgelenmiştir.
 
-Gereksinim: PATH üzerinde çalışan bir Docker motoru (Docker Desktop).
+Gereksinim: **Linux konteynerleri çalıştırabilen** bir Docker motoru
+(Docker Desktop'ın WSL2 backend'i). Saf Windows container engine yeterli
+değildir: imaj Linux'tur (`node:24-slim`) ve worker Linux konukta koşar;
+motor imaji derleyemezse izolasyon testi hata detayıyla SKIP yazar ve
+"geçti" sayılmaz.
 Kurulum:
 
 ```powershell
