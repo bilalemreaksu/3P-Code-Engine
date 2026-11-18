@@ -25,9 +25,25 @@ function isolationMode() {
   if (!['off', 'docker'].includes(mode)) throw new Error(`Unknown CODE_MODE_ISOLATION value: ${process.env.CODE_MODE_ISOLATION}`);
   return mode;
 }
+// The docker CLI by default, overridable through CODE_MODE_DOCKER_BIN.
+// The override is useful for alternative CLIs (podman) and lets the isolation
+// test substitute a fake engine.
+export function dockerBin() {
+  return process.env.CODE_MODE_DOCKER_BIN || 'docker';
+}
+// A batch-file CLI (.cmd/.bat, as version managers or the test fake produce)
+// cannot be spawned directly on Windows — spawn() throws EINVAL for it — so
+// the system shell executes it. /s keeps the argument quoting intact.
+export function spawnDocker(args, opts) {
+  const bin = dockerBin();
+  if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(bin)) {
+    return spawn(process.env.COMSPEC || 'cmd.exe', ['/d', '/s', '/c', bin, ...args], opts);
+  }
+  return spawn(bin, args, opts);
+}
 function dockerRun(args, { timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawnDocker(args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', timer;
     const fail = error => { clearTimeout(timer); child.kill(); reject(error); };
     if (timeoutMs) timer = setTimeout(() => fail(new Error(`docker ${args[0]} timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -49,13 +65,19 @@ function ensureWorkerImage() {
     try { await dockerRun(['image', 'inspect', WORKER_IMAGE], { timeoutMs: 15000 }); return; }
     catch { /* first use: build the small worker image once */ }
     await dockerRun(['build', '-q', '-t', WORKER_IMAGE, '-f', path.join(engineDir, 'worker-image', 'Dockerfile'), engineDir], { timeoutMs: 300000 });
-  })();
+  })().catch(error => {
+    // A failure is transient (e.g. Docker Desktop stopped mid-session):
+    // forget the cached rejection so the next job re-probes the engine
+    // instead of replaying a stale error until the server restarts.
+    imageReady = undefined;
+    throw error;
+  });
   return imageReady;
 }
 isolationMode() === 'docker' && void ensureWorkerImage().catch(() => {});
 function spawnWorker(cwd, containerName) {
   if (isolationMode() !== 'docker') return { child: fork(worker, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true }), isolated: false, container: undefined };
-  const child = spawn('docker', ['run', '-i', '--rm', '--init', '--name', containerName,
+  const child = spawnDocker(['run', '-i', '--rm', '--init', '--name', containerName,
     '-v', `${cwd}:/work`, '-w', '/work',
     '-e', 'CODE_MODE_WORKER_TRANSPORT=stdio',
     WORKER_IMAGE, 'node', '/app/code-mode-worker.mjs'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -159,7 +181,7 @@ function load(kind, id) {
 function terminate(child, container) {
   if (container) {
     // The attached `docker run` client exits when the container is removed.
-    const killer = spawn('docker', ['rm', '-f', container], { windowsHide: true, stdio: 'ignore' });
+    const killer = spawnDocker(['rm', '-f', container], { windowsHide: true, stdio: 'ignore' });
     killer.on('error', () => child.kill());
     killer.unref();
     return;

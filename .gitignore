@@ -11,3 +11,4 @@ claude_desktop_config*.json
 *.backup
 *.backup-*
 code-mode-test-*/
+code-mode-isolation-test-*/

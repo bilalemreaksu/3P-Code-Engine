@@ -141,6 +141,12 @@ dosyasına yazar (`isolationMode`, `dockerAvailable`, `workerIsolated`).
 Motor yanıt vermezse `workerIsolated` `false` kalır ve izolasyon testi
 SKIP yazıp durur — çalıştırılamayan sınır "geçti" sayılmaz.
 
+Kapanma davranışı kalıcı testle sabitlenmiştir (sahte motor, her makinede
+çalışır): motor dururken iş çalışmaz (yan etki yoktur), hata motorunkidir
+ve görüntü yalıtım iddia etmez; motor döndüğünde bir sonraki iş motoru
+yeniden dener — başarısız deneme önbelleklenmez, sunucu yeniden
+başlatılmaz.
+
 ### Alternatif yollar
 
 1. **Farklı Windows kullanıcısı:** broker ve MCP sunucusu ayrı (düşük

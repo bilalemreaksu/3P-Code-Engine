@@ -6,10 +6,12 @@
 // host-side broker with a fromUi audit record, and cancelling a job removes
 // its container.
 //
-// Without a docker engine this suite prints SKIP and exits — an unavailable
-// engine is not a pass, and the line says so.
+// Section 0 (fail-closed without a working engine, using a fake docker CLI)
+// runs on every machine. Without a real docker engine the remaining sections
+// print SKIP and exit — an unavailable engine is not a pass, and the line
+// says so.
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { access, chmod, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -27,21 +29,6 @@ const docker = (args, timeoutMs = 60000) => new Promise(resolve => {
   child.on('close', code => { clearTimeout(timer); resolve({ code, stdout: out, stderr: err }); });
 });
 const tail = r => (r.stderr || r.stdout).trim().split('\n').filter(Boolean).slice(-3).join(' | ');
-const engine = await docker(['version', '--format', '{{.Server.Version}}'], 8000);
-if (engine.code !== 0) {
-  console.log('SKIP: no docker engine on this machine; OS isolation test not run (not a pass)');
-  process.exit(0);
-}
-// Build the image (always: a stale image would test old worker code). An
-// engine that answers `version` but cannot build (for example a CI backend
-// without pull access) cannot prove the boundary either, so report SKIP with
-// the error instead of passing or failing on infrastructure.
-const built = await docker(['build', '-q', '-t', '3p-code-engine-worker', '-f', path.join(process.cwd(), 'worker-image', 'Dockerfile'), process.cwd()], 420000);
-if (built.code !== 0) {
-  console.log(`SKIP: docker engine present but the worker image could not be built: ${tail(built)} — OS isolation test not run (not a pass)`);
-  process.exit(0);
-}
-const dockerPs = () => docker(['ps', '-aq', '--filter', 'name=3p-worker-'], 15000).then(r => (r.code === 0 ? r.stdout : ''));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const waitFor = async (fn, what, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
@@ -69,6 +56,102 @@ if (event.hook_event_name === 'PreToolUse' && event.tool_name === 'Write' && Str
 } else {
   console.log('{}');
 }`);
+
+// 0. Fail closed when the engine is down. The engine resolves its CLI through
+//    CODE_MODE_DOCKER_BIN, so a fake engine (a node script behind a `docker`
+//    batch file) stands in for a stopped daemon — no PATH or extension-
+//    resolution tricks needed. Runs on every machine, including CI. With the
+//    engine "down": the job must not
+//    execute (no file side effects), the error must be the engine's, and the
+//    snapshot must not claim isolation. Once the engine recovers, the next
+//    job must re-probe instead of replaying a stale cached rejection.
+{
+  const fakeData = path.join(dir, 'fake-data');
+  const fakeBin = path.join(dir, 'fakebin');
+  const stateFile = path.join(dir, 'fake-docker-state.json');
+  const fakeEngine = path.join(dir, 'fake-docker-engine.mjs');
+  const bin = path.join(fakeBin, process.platform === 'win32' ? 'docker.cmd' : 'docker');
+  await mkdir(fakeBin);
+  await writeFile(stateFile, JSON.stringify({ down: true, runs: 0 }));
+  // writeSync before exit: process.exit() does not flush piped stdout.
+  await writeFile(fakeEngine, `import fs from 'node:fs';
+const stateFile = process.env.FAKE_DOCKER_STATE;
+let state = { down: false, runs: 0 };
+try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* first call */ }
+const finish = (code, stdout, stderr) => {
+  if (stdout) fs.writeSync(1, stdout);
+  if (stderr) fs.writeSync(2, stderr);
+  process.exit(code);
+};
+const refuse = () => finish(1, '', 'Cannot connect to the Docker daemon. Is the docker daemon running?\\n');
+const args = process.argv.slice(2);
+if (args[0] === 'version') { if (state.down) refuse(); finish(0, '29.9.3\\n', ''); }
+if (args[0] === 'image') { if (state.down) refuse(); finish(0, '[]\\n', ''); }
+if (args[0] === 'build') { if (state.down) refuse(); finish(0, 'sha256:fake\\n', ''); }
+if (args[0] === 'run') {
+  state.runs += 1;
+  try { fs.writeFileSync(stateFile, JSON.stringify(state)); } catch { /* best effort */ }
+  finish(0, '', ''); // fake engine: the "container" exits without a worker
+}
+finish(0, '', '');
+`);
+  // The shim invokes node by absolute path; %* / "$@" pass the CLI through.
+  const shimBody = process.platform === 'win32'
+    ? `@echo off\r\n"${process.execPath}" "${fakeEngine}" %*\r\n`
+    : `#!/bin/sh\nexec "${process.execPath}" "${fakeEngine}" "$@"\n`;
+  await writeFile(bin, shimBody);
+  if (process.platform !== 'win32') await chmod(bin, 0o755);
+  const fakeClient = new Client({ name: 'code-mode-isolation-fake', version: '1.0.0' });
+  await fakeClient.connect(new StdioClientTransport({
+    command: process.execPath,
+    args: ['server-code-mode.mjs'],
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      CODE_MODE_DATA_DIR: fakeData,
+      CODE_MODE_POLICY_PATH: policyPath,
+      CODE_MODE_MCP_CONFIG_PATH: mcpConfig,
+      CODE_MODE_PERMISSION_MODE: 'rules',
+      CODE_MODE_ISOLATION: 'docker',
+      CODE_MODE_DOCKER_BIN: bin,
+      FAKE_DOCKER_STATE: stateFile,
+    },
+  }));
+  const downResponse = await fakeClient.callTool({ name: 'code_execute', arguments: { cwd: project, code: "await write('marker.txt', 'x');\nreturn 'reached';" } });
+  assert.equal(downResponse.isError, true);
+  assert.match(downResponse.content[0].text, /Docker daemon/i);
+  await assert.rejects(access(path.join(project, 'marker.txt')), { code: 'ENOENT' });
+  const snapshot = JSON.parse(await waitFor(() => readFile(path.join(fakeData, 'isolation.json'), 'utf8'), 'fake isolation.json'));
+  assert.equal(snapshot.isolationMode, 'docker');
+  assert.equal(snapshot.dockerAvailable, false);
+  assert.equal(snapshot.workerIsolated, false);
+  await writeFile(stateFile, JSON.stringify({ down: false, runs: 0 }));
+  const upResponse = await fakeClient.callTool({ name: 'code_execute', arguments: { cwd: project, code: '1 + 1' } });
+  // Engine recovered: the image step now passes and the (fake) run was
+  // attempted — the failure moved from the engine to worker startup, which
+  // proves the stale rejection was dropped.
+  assert.equal(upResponse.isError, true);
+  assert.match(upResponse.content[0].text, /exited without result/);
+  assert.equal(JSON.parse(await readFile(stateFile, 'utf8')).runs, 1);
+  await fakeClient.close();
+  console.log('PASS: fail-closed without a working engine (no execution, honest snapshot, re-probe after recovery)');
+}
+
+const engine = await docker(['version', '--format', '{{.Server.Version}}'], 8000);
+if (engine.code !== 0) {
+  console.log('SKIP: no docker engine on this machine; OS isolation test not run (not a pass)');
+  process.exit(0);
+}
+// Build the image (always: a stale image would test old worker code). An
+// engine that answers `version` but cannot build (for example a CI backend
+// without pull access) cannot prove the boundary either, so report SKIP with
+// the error instead of passing or failing on infrastructure.
+const built = await docker(['build', '-q', '-t', '3p-code-engine-worker', '-f', path.join(process.cwd(), 'worker-image', 'Dockerfile'), process.cwd()], 420000);
+if (built.code !== 0) {
+  console.log(`SKIP: docker engine present but the worker image could not be built: ${tail(built)} — OS isolation test not run (not a pass)`);
+  process.exit(0);
+}
+const dockerPs = () => docker(['ps', '-aq', '--filter', 'name=3p-worker-'], 15000).then(r => (r.code === 0 ? r.stdout : ''));
 
 const client = new Client({ name: 'code-mode-isolation-test', version: '1.0.0' });
 await client.connect(new StdioClientTransport({

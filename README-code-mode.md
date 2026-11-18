@@ -186,7 +186,11 @@ Script motoru doğrular, `3p-code-engine-worker` imajını önden derler ve
 `CODE_MODE_ISOLATION=docker` değişkenini Desktop ortamına yazar (yeniden
 kurulumda `off` değeri değişkeni ortamdan çıkarır). İmajın yoksa ilk iş
 derler; `docker build -t 3p-code-engine-worker -f worker-image/Dockerfile .`
-ile elle de kurulabilir.
+ile elle de kurulabilir. Docker CLI varsayılan olarak `docker` adıyla
+çözülür; `CODE_MODE_DOCKER_BIN` ile alternatif bir ikili/makro
+(örn. podman, izole testteki sahte motor) gösterilebilir — `.cmd`/`.bat`
+hedefi sistem kabuğu üzerinden çalıştırılır (Node'un `spawn`'ı batch
+dosyasını doğrudan başlatamaz).
 
 Davranış farkları: `run` PowerShell yerine `/bin/sh` kullanır
 (`uname -s` → `Linux`); kod içindeki mutlak host yolları konuk köküne
@@ -268,10 +272,13 @@ zinciri, yeniden başlatma), arka plan işlerini, sunucu yeniden başlatma sonra
 devamı, auto onayının geçersizleşmesini, onay süresinin dolmasını, çıktının
 engellendiğinde sızmamasını, command/HTTP/MCP hook'larını, etkileşimli
 transcript kontrollerini, review ve kurulum akışlarını doğrular.
-`test-code-mode-isolation.mjs` Docker motoru bulunursa konteyner sınırını
-doğrular: proje dışı dosya erişimi, host loopback'e erişilemezlik, Linux
-konuk kabuğu, broker onayı (`fromUi` denetim kaydıyla) ve iptalde
-konteyner temizliği. Motor yoksa SKIP yazar ve "geçti" sayılmaz.
+`test-code-mode-isolation.mjs` her makinede sahte bir motorla kapatma
+davranışını doğrular (motor dururken iş çalışmaz, hata motorun kendisidir,
+gölge `isolation.json` yalıtım iddia etmez, motor dönünce iş yeniden
+dener) — Docker motoru varsa ayrıca konteyner sınırını doğrular: proje
+dışı dosya erişimi, host loopback'e erişilemezlik, Linux konuk kabuğu,
+broker onayı (`fromUi` denetim kaydıyla) ve iptalde konteyner temizliği.
+Motor yoksa bu kısımlar SKIP yazar ve "geçti" sayılmaz.
 HTTP ve sınıflandırıcı testleri yerel TCP bağlantısı gerektirir. Canlı Desktop
 modelinin gerçek araç seçimi ve istemcinin form görünümü ayrı doğrulama gerektirir.
 Özellik karşılaştırması ve canlı doğrulama adımları:

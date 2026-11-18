@@ -1,14 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { spawn } from 'node:child_process';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { formatRecord } from './code-mode-transcript.mjs';
 import { getPermissionMode } from './code-mode-policy.mjs';
 import { openAIModel, reviewChange } from './review-engine.mjs';
 import { runReviewCycle } from './review-cycle.mjs';
-import { dataDir, startExecution, getJob, cancelJob, deleteJob, deleteSession, resumeSession } from './execution-manager.mjs';
+import { dataDir, startExecution, getJob, cancelJob, deleteJob, deleteSession, resumeSession, spawnDocker } from './execution-manager.mjs';
 import { isolationSnapshot } from './approval-client.mjs';
 
 const server = new McpServer({ name: '3p-code-mode', version: '0.10.0' });
@@ -28,7 +27,7 @@ server.server.oninitialized = () => {
     let dockerAvailable = null;
     if ((process.env.CODE_MODE_ISOLATION || 'off').toLowerCase() === 'docker') {
       dockerAvailable = await new Promise(resolve => {
-        const child = spawn('docker', ['version', '--format', '{{.Server.Version}}'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        const child = spawnDocker(['version', '--format', '{{.Server.Version}}'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
         let out = '';
         const timer = setTimeout(() => { child.kill(); resolve(false); }, 4000);
         child.stdout.on('data', d => { out += d; });
