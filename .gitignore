@@ -10,3 +10,4 @@ backups/
 claude_desktop_config*.json
 *.backup
 *.backup-*
+code-mode-test-*/

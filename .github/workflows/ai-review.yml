@@ -1,0 +1,51 @@
+name: AI review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  review:
+    # The model must be reachable from a GitHub-hosted runner. No secrets are
+    # supplied to untrusted PR code; use only a gateway designed for this use.
+    if: ${{ vars.REVIEW_MODEL_ENDPOINT != '' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      REVIEW_MODEL_ENDPOINT: ${{ vars.REVIEW_MODEL_ENDPOINT }}
+      REVIEW_MODEL_NAME: ${{ vars.REVIEW_MODEL_NAME }}
+      REVIEW_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Run review and checks
+        id: review
+        shell: pwsh
+        run: |
+          node review-cli.mjs --cwd "$env:GITHUB_WORKSPACE" --base "$env:REVIEW_BASE" --auto-check --report "$env:RUNNER_TEMP/review.md" --json "$env:RUNNER_TEMP/review.json"
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" >> $env:GITHUB_OUTPUT
+      - name: Upload review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/review.md
+            ${{ runner.temp }}/review.json
+          if-no-files-found: warn
+      - name: Enforce review result
+        if: always()
+        shell: pwsh
+        env:
+          REVIEW_EXIT: ${{ steps.review.outputs.exit_code }}
+        run: |
+          if ($env:REVIEW_EXIT -ne '0') { exit 1 }
