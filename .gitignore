@@ -1,0 +1,12 @@
+﻿node_modules/
+.patch-requests/
+backups/
+*.bak
+*.log
+.env
+.env.*
+
+# Local configuration backups
+claude_desktop_config*.json
+*.backup
+*.backup-*
