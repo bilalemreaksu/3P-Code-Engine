@@ -5,10 +5,40 @@ const quoteArgument = process.platform === 'win32'
   ? function(value) { return "'" + String(value).replace(/'/g, "''") + "'"; }
   : function(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'"; };
 
+// A syntax error in generated code must be self-locating: the message carries
+// the offending line plus a caret under the offending character, so the caller
+// can fix the position without re-reading the whole code. error.pos (a
+// character offset) is the anchor — loc.line/column vary by parser.
+const FRAME_WIDTH = 160;
+function syntaxFrame(code, error) {
+  if (!Number.isInteger(error.pos) || error.pos < 0 || error.pos > code.length) return '';
+  const before = code.slice(0, error.pos);
+  const lineStart = before.lastIndexOf('\n') + 1;
+  const column = error.pos - lineStart;
+  const raw = code.slice(lineStart).split('\n', 1)[0].replace(/\r$/, '');
+  let shown = raw, offset = 0;
+  if (shown.length > FRAME_WIDTH) {
+    offset = Math.max(0, column - Math.floor(FRAME_WIDTH / 2));
+    shown = shown.slice(offset, offset + FRAME_WIDTH);
+  }
+  const prefix = offset ? '... ' : '';
+  const suffix = offset + shown.length < raw.length ? ' ...' : '';
+  return `| ${prefix}${shown}${suffix}\n| ${prefix}${' '.repeat(column - offset)}^`;
+}
+
 // Parse statements rather than guessing semicolon boundaries (ASI, comments,
 // templates and nested blocks must retain their normal JavaScript meaning).
 export function completionBody(code) {
-  const tree = parse(code, { ecmaVersion: 'latest', allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
+  let tree;
+  try {
+    tree = parse(code, { ecmaVersion: 'latest', allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      const frame = syntaxFrame(code, error);
+      if (frame) throw new SyntaxError(`${error.message}\n${frame}`, { cause: error });
+    }
+    throw error;
+  }
   const last = tree.body.at(-1);
   if (last?.type !== 'ExpressionStatement') return code;
   return code.slice(0, last.start) + 'return (' + code.slice(last.expression.start, last.expression.end) + ');' + code.slice(last.end);

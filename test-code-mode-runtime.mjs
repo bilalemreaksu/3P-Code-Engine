@@ -14,6 +14,34 @@ assert.equal((await run('await new Promise(resolve=>setTimeout(resolve,5)); stat
 assert.equal((await run('const id=setTimeout(()=>log("forgotten"),1000); clearTimeout(id); log("visible"); 1')).value,1);
 assert.deepEqual(messages,[['visible']]);
 assert.match(completionBody('const x=1\nx // ending'),/return \(x\)/);
+// A syntax error in the generated code must be self-locating: the offending
+// line plus a caret under the offending character, so the caller can fix the
+// position without re-reading the whole code (windowed on very long lines).
+{
+  const problem = "const defter = 'anchor ok ' + dt + @JSFEYEAR";
+  let failure;
+  try { completionBody('const ok = 1;\n' + problem); } catch (error) { failure = error; }
+  assert.ok(failure, 'completionBody must throw on a syntax error');
+  assert.equal(failure.name, 'SyntaxError');
+  const frame = failure.message.split('\n');
+  const lineIdx = frame.findIndex(line => line.includes(problem));
+  assert.ok(lineIdx > 0, `error message must carry the offending line:\n${failure.message}`);
+  const shown = frame[lineIdx], caretLine = frame[lineIdx + 1];
+  assert.ok(caretLine && caretLine.includes('^'), `a caret line must follow the offending line:\n${failure.message}`);
+  assert.equal(caretLine.indexOf('^'), shown.indexOf(problem) + problem.indexOf('@'), 'caret must point under the offending character');
+}
+{
+  const problem = `const s = '${'x'.repeat(300)}' + dt + @bad`;
+  let failure;
+  try { completionBody(problem); } catch (error) { failure = error; }
+  assert.ok(failure, 'completionBody must throw on a syntax error in a long line');
+  const frame = failure.message.split('\n');
+  const lineIdx = frame.findIndex(line => line.includes('@bad'));
+  assert.ok(lineIdx > 0, `long-line error must still carry the frame:\n${failure.message}`);
+  assert.ok(frame[lineIdx].length < 400, `offending line must be windowed, was ${frame[lineIdx].length} chars`);
+  assert.equal(frame[lineIdx + 1].indexOf('^'), frame[lineIdx].indexOf('@'), 'caret must point under the offending character on a windowed line');
+}
+await assert.rejects(run("const s = 'a' + @b"), error => error.message.includes('^') && error.message.includes('const s'), 'evaluateCode must surface the syntax frame');
 for(const specimen of ['process.exit()','require("node:fs")','await import("node:fs/promises")','fetch("http://127.0.0.1/")','Function("return process")()','tools.read.constructor("return process")()','await __bridge("constructor", "[]")']) {
   await assert.rejects(run(specimen),undefined,specimen);
 }
