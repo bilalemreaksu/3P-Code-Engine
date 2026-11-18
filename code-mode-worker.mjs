@@ -4,6 +4,7 @@ import path from 'node:path';
 import { inspect } from 'node:util';
 import { loadCodePolicy } from './code-mode-policy.mjs';
 import { mcpDefinitions, withMcp } from './code-mode-mcp.mjs';
+import { send as channelSend, connected, onMessage, disconnect } from './code-mode-channel.mjs';
 
 // This process runs trusted generated code with the user's operating-system
 // privileges. AsyncFunction is an execution mechanism, NOT a sandbox.
@@ -21,20 +22,20 @@ let holdOutput = false;
 let outputClosed = false;
 const heldEvents = [];
 const progress = (kind, data) => {
-  if (!process.connected || outputClosed) return;
+  if (!connected() || outputClosed) return;
   const input = String(data);
   const value = input.slice(0, Math.min(4096, Math.max(0, OUTPUT_LIMIT - progressChars)));
   progressChars += value.length;
   try {
-    const send = event => { if (holdOutput) heldEvents.push(event); else process.send(event, () => {}); };
-    if (value) send({ __codeModeProgress: true, kind, data: value });
+    const emit = event => { if (holdOutput) heldEvents.push(event); else channelSend(event, () => {}); };
+    if (value) emit({ __codeModeProgress: true, kind, data: value });
     if (value.length < input.length && !progressTruncated) {
       progressTruncated = true;
-      send({ __codeModeProgress: true, kind: 'limit', data: 'Live output truncated.' });
+      emit({ __codeModeProgress: true, kind: 'limit', data: 'Live output truncated.' });
     }
   } catch { /* parent may disconnect */ }
 };
-const sendFinal = result => new Promise(resolve => { if (!process.connected) return resolve(); try { process.send(result, () => resolve()); } catch { resolve(); } });
+const sendFinal = result => new Promise(resolve => { if (!connected()) return resolve(); try { channelSend(result, () => resolve()); } catch { resolve(); } });
 const record = (operation, details) => { if (operations.length < 100) { operations.push({ operation, ...details }); progress('operation', JSON.stringify({ operation, ...details })); } };
 const log = (...args) => { if (logs.length < 100) { const value = cap(args.map(a => cap(a)).join(' ')); logs.push(value); progress('log', value); } };
 
@@ -118,12 +119,18 @@ async function settleNested(value, seen = new WeakSet(), depth = 0) {
   return Array.isArray(value) ? entries.map(([, item]) => item) : Object.fromEntries(entries);
 }
 
-process.once('message', async ({ code, cwd, sessionId, mode, background = false, state = {} }) => {
+onMessage(async message => {
+  // Only the initial job message starts execution; decision replies
+  // ({decisionId, allowed, error}) are consumed by the policy module's own
+  // listener. The original used process.once; the channel listener is
+  // persistent, so filter by shape instead.
+  if (typeof message?.code !== 'string') return;
+  const { code, cwd, sessionId, mode, background = false, state = {}, policy } = message;
   let result;
   try {
     process.chdir(await realpath(cwd));
     if (!(await stat('.')).isDirectory()) throw new Error('cwd must be a directory');
-    checkTool = await loadCodePolicy(process.cwd(), sessionId, mode);
+    checkTool = await loadCodePolicy(process.cwd(), sessionId, mode, policy);
     holdOutput = background && checkTool.hasOutputHooks;
     await checkTool('REPL', { code });
     const tools = {
@@ -162,7 +169,7 @@ process.once('message', async ({ code, cwd, sessionId, mode, background = false,
     if (holdOutput) {
       try {
         await checkTool.output({ result, events: heldEvents });
-        for (const event of heldEvents) if (process.connected) process.send(event, () => {});
+        for (const event of heldEvents) if (connected()) channelSend(event, () => {});
       } catch (error) {
         result = { ok: false, outputBlocked: true, error: `Code output blocked: ${error.message}` };
       }
@@ -170,7 +177,7 @@ process.once('message', async ({ code, cwd, sessionId, mode, background = false,
     await sendFinal(result);
   } finally {
     // Do not let forgotten timers keep the worker alive.
-    if (process.connected) process.disconnect();
+    disconnect();
     process.exit();
   }
 });

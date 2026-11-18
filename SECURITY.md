@@ -80,19 +80,77 @@ hesabın sahibi her şeye zaten erişebildiği için **OS düzeyinde çözüleme
 Herhangi bir dosya, port veya bellek mekanizması, aynı kullanıcının sürecine
 karşı mutlak gizlilik sağlamaz.
 
-## Sert sınır: OS izolasyonu
+## Sert sınır: OS izolasyonu (Docker backend'i uygulandı)
 
-Gerçek bir güvenlik sınırı yalnızca **işletim sistemi düzeyinde** kurulur:
+Gerçek bir güvenlik sınırı yalnızca **işletim sistemi düzeyinde** kurulur.
+Bu depoda `CODE_MODE_ISOLATION=docker` değeriyle uygulandı ve
+`test-code-mode-isolation.mjs` ile doğrulandı.
+
+### Docker backend'i
+
+Her iş tek kullanımlık bir konteynerde koşar: imaj `3p-code-engine-worker`
+(`worker-image/Dockerfile`; ilk iş bir kez derler, imaj `npm ci` ile
+kurulur). Sunucu `docker run --rm` ile konuk başlatır; worker protokolü fork
+IPC yerine stdio üzerinden satır bazlı JSON taşır (`code-mode-channel.mjs`).
+Kurulum: `.\install-code-mode.ps1 -Isolation docker` (motoru doğrular,
+imajı önden derler, `CODE_MODE_ISOLATION=docker`'i Desktop ortamına yazar).
+
+Konteyner **kapatır** (testte doğrulanmış):
+
+- **Host dosyaları görünmez.** Tek host yüzeyi işin projesidir: `cwd`
+  salt bağ olarak `/work`'a takılır. Proje dışındaki her dosya — veri
+  dizini (`%LOCALAPPDATA%\3p-code-engine`), `broker.log`, `broker.json`,
+  Desktop yapılandırması — `ENOENT` ile erişilemez (test: projenin
+  komşusundaki `secret.txt` okunamaz).
+- **Host döngüsel arayüzüne erişim yoktur.** Broker yalnızca host'un
+  127.0.0.1'inde dinler. Konteynerin kendi loopback'inde dinleyen hiçbir
+  şey yoktur (test: worker'dan `fetch('http://127.0.0.1:<broker-port>')`
+  bağlantı hatası alır); 127.0.0.1'e bağlı dinleyici host'un diğer
+  arayüzlerinden de teslim edilmediği için konuk IP'sinden ulaşılamaz.
+  İletilen onay URL'i model tarafından bilinse bile konuktan
+  kullanılamaz.
+- **Broker yüzeyi koruk altında kalır.** Token, tek kullanımlık nonce'lar,
+  `approvals.jsonl` zinciri ve bekleyen onaylar host tarafında yaşar;
+  onay yine yalnızca insanın tarayıcı sayfasından (Origin denetimi) gelir
+  (test: izolasyondaki onay, `fromUi: true` ve `channel: 'ui'` denetim
+  kaydıyla çözülür).
+
+Konteyner **kapatmaz** (bilinçli kalan riskler):
+
+- Proje dizini, modelin normal çalışma alanı olduğu için tümüyle erişilebilir.
+- Konteynerin dış ağı varsayılan olarak açıktır: worker `fetch` ile
+  internete erişebilir (host iç ağı hariç). Dış ağı kapatmak için
+  `--network none` gerekir; bu, onay akışını etkilemez (broker host'tadır).
+- `callMcp`/`listMcpServers` konukta Desktop yapılandırmasını görmez
+  (yapılandırma host'tadır): bu modda "not configured" hatası döner.
+- Hook'lar host yolu okuyamaz: politika host'ta `CODE_MODE_POLICY_PATH`
+  üzerinden okunup işle birlikte konuğa verilir; hook scriptleri proje
+  dizininde (yani `/work` altında) yaşar, mutlak yollar konuk köküne göre
+  çözülür.
+- Imaj tedarik zinciri: taban imaj `node:24-slim`, kod bu depodan kopyalanır.
+
+Davranış farkları: konuk kabuk Linux'tur (`run` PowerShell yerine
+`/bin/sh` kullanır, `uname -s` → `Linux`), kod içindeki mutlak host
+yolları konuk köküne göre çözülür.
+
+Yalıtım yalnızca flag ile değil, gerçek motorla kanıtlanır: sunucu
+bağlantı başlatıldığında `docker version` sorar ve yanıtı `isolation.json`
+dosyasına yazar (`isolationMode`, `dockerAvailable`, `workerIsolated`).
+Motor yanıt vermezse `workerIsolated` `false` kalır ve izolasyon testi
+SKIP yazıp durur — çalıştırılamayan sınır "geçti" sayılmaz.
+
+### Alternatif yollar
 
 1. **Farklı Windows kullanıcısı:** broker ve MCP sunucusu ayrı (düşük
    yetkili) bir hesapta çalışsın; model/worker ana hesapta. Farklı kullanıcının
    dosyalarını (ACL) ve belleğini okuyamaz; token ve denetim zinciri ona
    karşı korunur.
-2. **Konteyner / sanal makine:** worker'ı Docker, Windows Sandbox veya WSL2
-   içinde çalıştırın. Broker konuk dışarısında kalır.
+2. **Sanal makine:** worker'ı bir VM içinde çalıştırın; broker konuk
+   dışarısında kalır.
 3. **Yalıtım algılanır ve kaydedilir:** sunucu her istemci başlatıldığında
-   `isolation.json` yazar (`container`, `wsl`, `workerIsolated` alanları);
-   `verify-results.mjs` ve rapor bu durumu gösterir.
+   `isolation.json` yazar (`container`, `wsl`, `isolationMode`,
+   `dockerAvailable`, `workerIsolated` alanları); `verify-results.mjs` ve
+   rapor bu durumu gösterir.
 
 `workerIsolated: false` iken bu sistem, "insan onayı + gözlemlenebilirlik"
 sunar; "güvenli kabuk" sunmaz.

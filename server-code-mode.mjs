@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { spawn } from 'node:child_process';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { formatRecord } from './code-mode-transcript.mjs';
@@ -10,7 +11,7 @@ import { runReviewCycle } from './review-cycle.mjs';
 import { dataDir, startExecution, getJob, cancelJob, deleteJob, deleteSession, resumeSession } from './execution-manager.mjs';
 import { isolationSnapshot } from './approval-client.mjs';
 
-const server = new McpServer({ name: '3p-code-mode', version: '0.9.0' });
+const server = new McpServer({ name: '3p-code-mode', version: '0.10.0' });
 
 // Record what the connecting MCP client actually supports. This is the
 // evidence for compatibility decisions: older code assumed clients offered
@@ -23,8 +24,20 @@ server.server.oninitialized = () => {
     capabilities: server.server.getClientCapabilities() ?? null,
   };
   void mkdir(dataDir, { recursive: true, mode: 0o700 }).then(async () => {
+    // The isolation flag is only real if a docker engine actually answers.
+    let dockerAvailable = null;
+    if ((process.env.CODE_MODE_ISOLATION || 'off').toLowerCase() === 'docker') {
+      dockerAvailable = await new Promise(resolve => {
+        const child = spawn('docker', ['version', '--format', '{{.Server.Version}}'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        const timer = setTimeout(() => { child.kill(); resolve(false); }, 4000);
+        child.stdout.on('data', d => { out += d; });
+        child.on('error', () => { clearTimeout(timer); resolve(false); });
+        child.on('close', code => { clearTimeout(timer); resolve(code === 0 && out.trim().length > 0); });
+      });
+    }
     await appendFile(path.join(dataDir, 'client-capabilities.jsonl'), `${JSON.stringify(record)}\n`, 'utf8');
-    await writeFile(path.join(dataDir, 'isolation.json'), JSON.stringify({ ts: record.ts, ...isolationSnapshot() }, null, 2), 'utf8');
+    await writeFile(path.join(dataDir, 'isolation.json'), JSON.stringify({ ts: record.ts, ...isolationSnapshot(dockerAvailable) }, null, 2), 'utf8');
   }).catch(() => {});
 };
 async function classify(event, signal) {
@@ -66,7 +79,7 @@ server.registerTool('code_execute', {
     if (reviewAfter && !['rules', 'bypassPermissions'].includes(getPermissionMode())) {
       throw new Error('reviewAfter runs outside Code Mode permissions and is unavailable in this permission mode');
     }
-    const job = startExecution({ cwd, code, timeoutMs, sessionId,
+    const job = await startExecution({ cwd, code, timeoutMs, sessionId,
       decide: (kind, event, signal) => decide(kind, event, AbortSignal.any([signal, extra.signal])) });
     const cancel = () => cancelJob(job.id);
     extra.signal.addEventListener('abort', cancel, { once: true });
@@ -92,7 +105,7 @@ server.registerTool('code_start', {
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
 }, async args => {
   try {
-    const job = startExecution({ ...args, background: true, decide });
+    const job = await startExecution({ ...args, background: true, decide });
     return response(getJob(job.id));
   } catch (e) { return jobError(e); }
 });

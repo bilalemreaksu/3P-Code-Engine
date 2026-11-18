@@ -1,4 +1,4 @@
-# 3P Code Mode v0.9
+# 3P Code Mode v0.10
 
 Claude Desktop 3P için deneysel MCP kod yürütme sunucusu. Model, tek `code_execute` çağrısında JavaScript yazar; kod asenkron işlemleri sırayla veya `Promise.all` ile paralel çalıştırabilir, sonuçları süzebilir, dosyaları değiştirebilir ve komut/test çalıştırabilir. Anthropic Code Mode'un ayrı bir uygulamasıdır; onun dahili araçları, hook'ları, arayüzü ve izin sistemi değildir.
 
@@ -160,6 +160,39 @@ kabul/red kararı yalnızca o sayfadan (broker kökeni doğrulanır) alınır.
 akışlarını kullanır; yalnızca `rules` veya `bypassPermissions` modlarında
 kullanılabilir. Code Mode yardımcı izinlerinin bunları denetlediği varsayılmamalıdır.
 
+### OS izolasyonu (`CODE_MODE_ISOLATION=docker`)
+
+Helper izinleri bir sandbox değildir (doğrudan Node.js erişimi onları
+aşar); sert sınır için worker işletim sistemi düzeyinde izole edilebilir.
+`CODE_MODE_ISOLATION=docker` ile her iş tek kullanımlık bir Docker
+konteynerinde koşar: işin projesi `/work` olarak bağlanır, host
+dosyaları görünmez, host'un 127.0.0.1 arayüzü — yani onay brokeri —
+konteynerden erişilemez, konuk kabuk Linux'tur. Tehdit modeli ve kalan
+riskler [SECURITY.md](SECURITY.md) dosyasındaki "Sert sınır" bölümünde
+belgelenmiştir.
+
+Gereksinim: PATH üzerinde çalışan bir Docker motoru (Docker Desktop).
+Kurulum:
+
+```powershell
+.\install-code-mode.ps1 -Isolation docker
+```
+
+Script motoru doğrular, `3p-code-engine-worker` imajını önden derler ve
+`CODE_MODE_ISOLATION=docker` değişkenini Desktop ortamına yazar (yeniden
+kurulumda `off` değeri değişkeni ortamdan çıkarır). İmajın yoksa ilk iş
+derler; `docker build -t 3p-code-engine-worker -f worker-image/Dockerfile .`
+ile elle de kurulabilir.
+
+Davranış farkları: `run` PowerShell yerine `/bin/sh` kullanır
+(`uname -s` → `Linux`); kod içindeki mutlak host yolları konuk köküne
+göre çözülür; `callMcp`/`listMcpServers` konukta Desktop yapılandırmasını
+görmediği için "not configured" hatası döner; hook scriptleri proje
+dizininde (mutlak yol konuk köküne göre) yaşar. Onay akışı değişmez:
+broker host'ta kalır, insan aynı web sayfasından karar verir. Sunucu,
+gerçek `docker version` yanıtını `isolation.json` dosyasına yazar; motor
+yoksa izolasyon etkin sayılmaz (`workerIsolated: false`).
+
 ### Oturum ve transcript
 
 `code_session_resume` çalışılan dizini, izin modunu ve son 100 yürütmenin
@@ -231,6 +264,10 @@ zinciri, yeniden başlatma), arka plan işlerini, sunucu yeniden başlatma sonra
 devamı, auto onayının geçersizleşmesini, onay süresinin dolmasını, çıktının
 engellendiğinde sızmamasını, command/HTTP/MCP hook'larını, etkileşimli
 transcript kontrollerini, review ve kurulum akışlarını doğrular.
+`test-code-mode-isolation.mjs` Docker motoru bulunursa konteyner sınırını
+doğrular: proje dışı dosya erişimi, host loopback'e erişilemezlik, Linux
+konuk kabuğu, broker onayı (`fromUi` denetim kaydıyla) ve iptalde
+konteyner temizliği. Motor yoksa SKIP yazar ve "geçti" sayılmaz.
 HTTP ve sınıflandırıcı testleri yerel TCP bağlantısı gerektirir. Canlı Desktop
 modelinin gerçek araç seçimi ve istemcinin form görünümü ayrı doğrulama gerektirir.
 Özellik karşılaştırması ve canlı doğrulama adımları:

@@ -5,7 +5,7 @@ ve [hook referansı](https://code.claude.com/docs/en/hooks) temel alınmıştır
 Bu proje, 3P/Desktop için bağımsız bir MCP sunucusudur. Claude Code ürününün
 kendi özellik bayrağını, hesap/model uygunluğunu veya arayüzünü uygulamaz.
 
-| Davranış | 3P Code Mode v0.9 |
+| Davranış | 3P Code Mode v0.10 |
 | --- | --- |
 | JavaScript ile sıralı/paralel araç çağrısı ve sonuç süzme | `code_execute`, async yardımcılar ve `Promise.all` |
 | Read/Write/Edit/Bash, `$` komutları | Yardımcılar ve `tools` takma adları; kabuk platforma göre seçilir |
@@ -23,7 +23,7 @@ kendi özellik bayrağını, hesap/model uygunluğunu veya arayüzünü uygulama
 | Oturumu devam ettirme | JSON `state`, cwd ve izin modu diskte tutulur; normal JS değişkenleri tutulmaz |
 | Transcript ve düzenleme önizlemesi | MCP metin blokları; terminalde `--interactive`, Ctrl+O ve daraltılmış Code satırları |
 | Claude Code Ctrl+O konuşma arayüzü | MCP sunucusunun değiştiremediği istemci özelliği; yerel görüntüleyici karşılığı sağlanır |
-| Yerleşik araç izinleri / OS sandbox | Bu sunucuda yalnızca yardımcı çağrılar denetlenir; doğrudan Node.js erişimi OS yetkileriyle çalışır |
+| Yerleşik araç izinleri / OS sandbox | Bu sunucuda yalnızca yardımcı çağrılar denetlenir; `CODE_MODE_ISOLATION=docker` ile worker, yalnızca projeyi bağlamış tek kullanımlık bir konteynerde, host loopback'ine (broker'a) erişemez biçimde Linux konukta çalışır ([SECURITY.md](SECURITY.md)) |
 | Anthropic hesabı, native build, özellik bayrağı ve sürüm kapıları | Claude Code'a özgü; bu bağımsız sunucuya uygulanmaz |
 | Remote Control, Chrome, computer use, agent teams ve uygulamalar arası oturum taşıma | Claude Code'a ait entegrasyonlar bu projede bulunmaz |
 
@@ -35,7 +35,10 @@ ayar dosyalarının veya tüm hook referansının birebir uyumluluğu iddiası d
 ## Doğrulama
 
 `npm test`: gerçek stdio MCP istemcisi/sunucusu, kontrollü yerel sınıflandırıcı,
-HTTP hook sunucusu ve MCP hook aracıyla bütünleşim testleri. Gizli çıktı içeren
+HTTP hook sunucusu ve MCP hook aracıyla bütünleşim testleri. Docker motoru
+mevcutsa `test-code-mode-isolation.mjs` konteyner sınırını doğrular
+(proje dışı dosyalar, host loopback erişilemezliği, Linux konuk, broker
+onayı ve iptal temizliği); motor yoksa SKIP yazar ve "geçti" sayılmaz. Gizli çıktı içeren
 arka plan işinde sonuç ve olayların engellenmesi, state'in kaydedilmemesi,
 eşzamanlı auto işlerindeki onay ve süre aşımı dosya etkileriyle kontrol edilir.
 Terminal görünümü gerçek stream/key olaylarıyla açılır, Ctrl+O ve Enter

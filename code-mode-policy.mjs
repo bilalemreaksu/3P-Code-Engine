@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runHooks, validateHooks } from './code-mode-hooks.mjs';
+import { send as channelSend, onMessage } from './code-mode-channel.mjs';
 
 const permissionModes = ['rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
 export function getPermissionMode() {
@@ -12,7 +13,7 @@ export function getPermissionMode() {
 }
 
 const decisions = new Map();
-process.on('message', message => {
+onMessage(message => {
   if (decisions.has(message?.decisionId)) decisions.get(message.decisionId)(message);
 });
 
@@ -24,7 +25,7 @@ function requestDecision(kind, event) {
       if (message.allowed === true) resolve();
       else reject(new Error(message.error || 'Code Mode permission denied'));
     });
-    process.send({ decisionId: id, kind, event }, error => {
+    channelSend({ decisionId: id, kind, event }, error => {
       if (!error) return;
       decisions.delete(id);
       reject(error);
@@ -32,11 +33,7 @@ function requestDecision(kind, event) {
   });
 }
 
-export async function loadCodePolicy(cwd, sessionId, mode) {
-  const policyPath = process.env.CODE_MODE_POLICY_PATH || fileURLToPath(new URL('./code-mode-policy.json', import.meta.url));
-  if (policyPath && !path.isAbsolute(policyPath)) throw new Error('CODE_MODE_POLICY_PATH must be absolute');
-  const policy = JSON.parse(await readFile(policyPath, 'utf8'));
-  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw new Error('Invalid Code Mode policy');
+export function policyCheck(policy, cwd, sessionId, mode) {
   const { deny = [], ask = [], preToolUse = [], userPromptSubmit = [] } = policy;
   for (const rules of [deny, ask]) {
     if (!Array.isArray(rules) || rules.some(rule => typeof rule !== 'string' || !rule)) {
@@ -63,4 +60,15 @@ export async function loadCodePolicy(cwd, sessionId, mode) {
   check.hasOutputHooks = userPromptSubmit.length > 0;
   check.output = output => runHooks(userPromptSubmit, { hook_event_name: 'UserPromptSubmit', source: 'poll_event', cwd, session_id: sessionId, prompt: JSON.stringify(output) });
   return check;
+}
+
+// Reads the policy file (CODE_MODE_POLICY_PATH or the bundled default).
+// In isolated mode the server loads the file on the host and passes the
+// parsed policy through the initial worker message instead.
+export async function loadCodePolicy(cwd, sessionId, mode, inlinePolicy) {
+  if (inlinePolicy !== undefined) return policyCheck(inlinePolicy, cwd, sessionId, mode);
+  const policyPath = process.env.CODE_MODE_POLICY_PATH || fileURLToPath(new URL('./code-mode-policy.json', import.meta.url));
+  if (policyPath && !path.isAbsolute(policyPath)) throw new Error('CODE_MODE_POLICY_PATH must be absolute');
+  const policy = JSON.parse(await readFile(policyPath, 'utf8'));
+  return policyCheck(policy, cwd, sessionId, mode);
 }

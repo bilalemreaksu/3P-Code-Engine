@@ -1,6 +1,6 @@
 {
   "name": "3p-code-engine",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server-code-mode.mjs",
-    "test": "node test-code-mode.mjs && node test-code-mode-hooks.mjs && node test-approval.mjs && node test-review-engine.mjs && node test-installer.mjs",
+    "test": "node test-code-mode.mjs && node test-code-mode-hooks.mjs && node test-approval.mjs && node test-review-engine.mjs && node test-installer.mjs && node test-code-mode-isolation.mjs",
     "transcript": "node code-mode-transcript.mjs",
     "review": "node review-cli.mjs",
     "review:fix": "node review-cycle-cli.mjs"

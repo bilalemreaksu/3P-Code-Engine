@@ -178,19 +178,27 @@ export async function cancelDecision(dataDir, nonce, reason) {
 // broker. Written once by the server at startup; used by SECURITY.md guidance
 // and by live verification. workerIsolated is true only when the worker runs
 // as a different OS user or in a container/VM; that is the only configuration
-// in which the helper-level gates plus broker form a hard boundary.
-export function isolationSnapshot() {
+// in which the helper-level gates plus broker form a hard boundary. With
+// CODE_MODE_ISOLATION=docker the probe is a real `docker version` check:
+// the flag alone is not isolation until a docker engine answers.
+export function isolationSnapshot(dockerAvailable) {
   let container = false, wsl = false;
   try {
     if (existsSync('/.dockerenv')) container = true;
     else if (existsSync('/proc/1/cgroup')) container = /docker|containerd|kubepods|lxc/i.test(readFileSync('/proc/1/cgroup', 'utf8'));
     if (process.platform === 'linux' && existsSync('/proc/version')) wsl = /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
   } catch { /* non-Linux filesystems */ }
+  const isolationMode = (process.env.CODE_MODE_ISOLATION || 'off').toLowerCase();
+  const dockerIsolated = isolationMode === 'docker' && dockerAvailable === true;
   return {
     platform: process.platform,
     container,
     wsl,
-    workerIsolated: container || wsl,
-    note: 'The worker runs untrusted model code with the OS privileges of the launching account. Helper-level policy gates are not a sandbox: direct Node.js/shell access bypasses them. For a hard boundary run the broker/worker split across OS users or in a container (see SECURITY.md).',
+    isolationMode: isolationMode === 'off' ? undefined : isolationMode,
+    dockerAvailable: dockerAvailable ?? null,
+    workerIsolated: dockerIsolated || container || wsl,
+    note: dockerIsolated
+      ? 'Isolated worker: each job runs in a disposable container with only the project mounted; the host loopback (approval broker) is unreachable from the worker. Helper gates remain the only control on the host side.'
+      : 'The worker runs untrusted model code with the OS privileges of the launching account. Helper-level policy gates are not a sandbox: direct Node.js/shell access bypasses them. For a hard boundary run with CODE_MODE_ISOLATION=docker or across OS users (see SECURITY.md).',
   };
 }

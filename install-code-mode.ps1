@@ -3,7 +3,8 @@ param(
     [string]$ConfigPath,
     [string]$NodePath,
     [string]$ModelEndpoint,
-    [string]$ModelName
+    [string]$ModelName,
+    [ValidateSet('off', 'docker')][string]$Isolation = 'off'
 )
 $ErrorActionPreference = 'Stop'
 if (-not $NodePath) {
@@ -17,6 +18,20 @@ $version = & $NodePath --version
 if ($LASTEXITCODE -ne 0 -or $version -notmatch '^v(\d+)\.' -or [int]$Matches[1] -lt 24) { throw 'Node.js 24 veya daha yeni bir surum gerekli.' }
 $server = Join-Path $PSScriptRoot 'server-code-mode.mjs'
 if (-not (Test-Path -LiteralPath $server -PathType Leaf)) { throw "Sunucu bulunamadi: $server" }
+if ($Isolation -eq 'docker') {
+    # -Isolation docker only counts with a running docker engine, and the
+    # worker image is built once up front so the first job is not surprised.
+    $dockerCommand = Get-Command docker.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $dockerCommand) { throw 'Isolasyon icin Docker gerekli; Docker Desktop kurulup calisir durumda olmali veya -Isolation off kullanin.' }
+    & $dockerCommand.Source version --format '{{.Server.Version}}' 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'Docker motoru calismiyor; Docker Desktop acilin veya -Isolation off kullanin.' }
+    Push-Location -LiteralPath $PSScriptRoot
+    try {
+        & $dockerCommand.Source build -q -t 3p-code-engine-worker -f 'worker-image/Dockerfile' . 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'Worker imaji derlenemedi; Docker, ag ve Dockerfile kontrol edin.' }
+    } finally { Pop-Location }
+    Write-Host 'Worker imaji hazir: 3p-code-engine-worker'
+}
 if (-not $ConfigPath) {
     $candidates = @()
     if ($env:LOCALAPPDATA) { $candidates += Join-Path $env:LOCALAPPDATA 'Claude-3p\claude_desktop_config.json' }
@@ -49,6 +64,8 @@ $previous = $config.mcpServers.PSObject.Properties['3p-code-mode']
 $environment = [pscustomobject]@{}
 if ($previous -and $previous.Value.env -is [pscustomobject]) { $environment = $previous.Value.env }
 $environment | Add-Member -NotePropertyName CODE_MODE_MCP_CONFIG_PATH -NotePropertyValue $ConfigPath -Force
+if ($Isolation -eq 'docker') { $environment | Add-Member -NotePropertyName CODE_MODE_ISOLATION -NotePropertyValue 'docker' -Force }
+else { $environment.PSObject.Properties.Remove('CODE_MODE_ISOLATION') }
 if ($ModelEndpoint) { $environment | Add-Member -NotePropertyName REVIEW_MODEL_ENDPOINT -NotePropertyValue $ModelEndpoint -Force }
 if ($ModelName) { $environment | Add-Member -NotePropertyName REVIEW_MODEL_NAME -NotePropertyValue $ModelName -Force }
 $entry = [pscustomobject]@{ command = $NodePath; args = @($server) }
