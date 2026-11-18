@@ -36,7 +36,10 @@ function dockerRun(args, { timeoutMs } = {}) {
     child.on('error', error => fail(error));
     child.on('close', code => {
       clearTimeout(timer);
-      if (code === 0) resolve(stdout); else reject(new Error(stderr.trim() || `docker ${args[0]} exited with code ${code}`));
+      if (code === 0) resolve(stdout);
+      // BuildKit writes progress to stderr on non-TTY; a build that dies
+      // early can leave stdout holding the only useful detail.
+      else reject(new Error([stderr.trim(), stdout.trim()].filter(Boolean).join(' | ').slice(-4000) || `docker ${args[0]} exited with code ${code}`));
     });
   });
 }

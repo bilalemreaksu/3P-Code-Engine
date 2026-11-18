@@ -17,25 +17,31 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { readAudit } from './approval-broker.mjs';
 
-const dockerVersion = await new Promise(resolve => {
-  const child = spawn('docker', ['version', '--format', '{{.Server.Version}}'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  let out = '';
-  const timer = setTimeout(() => { child.kill(); resolve(''); }, 8000);
+const docker = (args, timeoutMs = 60000) => new Promise(resolve => {
+  const child = spawn('docker', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '', err = '';
+  const timer = setTimeout(() => { child.kill(); resolve({ code: -1, stdout: out, stderr: err + '\n(timed out)' }); }, timeoutMs);
   child.stdout.on('data', d => { out += d; });
-  child.on('error', () => { clearTimeout(timer); resolve(''); });
-  child.on('close', code => { clearTimeout(timer); resolve(code === 0 ? out.trim() : ''); });
+  child.stderr.on('data', d => { err += d; });
+  child.on('error', e => { clearTimeout(timer); resolve({ code: -1, stdout: out, stderr: err + '\n' + e.message }); });
+  child.on('close', code => { clearTimeout(timer); resolve({ code, stdout: out, stderr: err }); });
 });
-if (!dockerVersion) {
+const tail = r => (r.stderr || r.stdout).trim().split('\n').filter(Boolean).slice(-3).join(' | ');
+const engine = await docker(['version', '--format', '{{.Server.Version}}'], 8000);
+if (engine.code !== 0) {
   console.log('SKIP: no docker engine on this machine; OS isolation test not run (not a pass)');
   process.exit(0);
 }
-const dockerQuery = args => new Promise((resolve, reject) => {
-  const child = spawn('docker', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  let out = '';
-  child.stdout.on('data', d => { out += d; });
-  child.on('error', reject);
-  child.on('close', code => (code === 0 ? resolve(out) : reject(new Error(`docker ${args[0]} exited ${code}`))));
-});
+// Build the image (always: a stale image would test old worker code). An
+// engine that answers `version` but cannot build (for example a CI backend
+// without pull access) cannot prove the boundary either, so report SKIP with
+// the error instead of passing or failing on infrastructure.
+const built = await docker(['build', '-q', '-t', '3p-code-engine-worker', '-f', path.join(process.cwd(), 'worker-image', 'Dockerfile'), process.cwd()], 420000);
+if (built.code !== 0) {
+  console.log(`SKIP: docker engine present but the worker image could not be built: ${tail(built)} — OS isolation test not run (not a pass)`);
+  process.exit(0);
+}
+const dockerPs = () => docker(['ps', '-aq', '--filter', 'name=3p-worker-'], 15000).then(r => (r.code === 0 ? r.stdout : ''));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const waitFor = async (fn, what, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
@@ -192,16 +198,16 @@ try {
   }
   // 5. Cancelling a job removes its container.
   {
-    const before = (await dockerQuery(['ps', '-aq', '--filter', 'name=3p-worker-'])).trim();
+    const before = (await dockerPs()).trim();
     const id = await start('await new Promise(resolve => setTimeout(resolve, 3600000));');
     await sleep(2500); // let the container boot
     const cancelResponse = await client.callTool({ name: 'code_cancel', arguments: { jobId: id } });
     assert.notEqual(cancelResponse.isError, true, cancelResponse.content[0].text);
     assert.equal(JSON.parse(cancelResponse.content[0].text).status, 'cancelled');
-    await waitFor(async () => (await dockerQuery(['ps', '-aq', '--filter', 'name=3p-worker-'])).trim() === before, 'container cleanup after cancel', 15000);
+    await waitFor(async () => (await dockerPs()).trim() === before, 'container cleanup after cancel', 15000);
   }
   await stopBroker();
-  console.log(`PASS: docker isolation (engine ${dockerVersion}) — project boundary, host loopback unreachable, Linux guest, broker approval with fromUi audit, container cleanup`);
+  console.log(`PASS: docker isolation (engine ${engine.stdout.trim()}) — project boundary, host loopback unreachable, Linux guest, broker approval with fromUi audit, container cleanup`);
 } finally {
   await stopBroker();
   await client.close().catch(() => {});
