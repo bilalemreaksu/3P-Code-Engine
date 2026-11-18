@@ -27,11 +27,13 @@ değildir. Eski Desktop raporu yeni sürümün UI kanıtı değildir.
 | Read/Write/Edit/Bash, `$` komutları | Yardımcılar ve `tools` takma adları; kabuk platforma göre seçilir |
 | MCP araçları | Host ve Docker modlarında yapılandırılmış stdio sunucuları keşfedilir/çağrılır; Docker'da politika denetimli host köprüsü kullanılır. Desktop'ın yerleşik araçları devralınmaz |
 | Son ifade sonucunu döndürme | Acorn AST ile son üst seviye ifade; yorumlar, template ve geçerli noktalı virgülsüz kod korunur |
-| Kurallar ve `PreToolUse` | Araç wildcard'ı, komut/dosya kapsamı, REPL denetimi ve JSON kararları; tüm native ayar şeması değildir |
+| Kurallar ve `PreToolUse` | Araç wildcard'ı, komut/dosya kapsamı, REPL denetimi ve JSON kararları; native `policy.hooks` adaptörü (matcher grupları, saniye `timeout`, `mcpTool`/`arguments`); tüm native ayar şeması değildir |
 | Hook hatası/zaman aşımı, `onFailure` | Command, HTTP ve MCP hook'ları; açık engelleme kararı her zaman uygulanır |
+| `updatedInput` / `additionalContext` | Hook'un yeni girdisi çalışana, denetime, onay önizlemesine ve kayda taşınır; zincir sonraki hook'a aktarılır. Context sonuçla modele iletilir |
+| Hook `permissionDecision: allow` | Modun onayını atlar; `deny`/`ask` kuralları, `plan` kısıtı ve auto sınıflandırmayı geçersiz kılamaz |
 | `UserPromptSubmit` / `poll_event` | Arka plan çıktısı yayımlanmadan önce denetlenir; engellenirse günlük, olay, sonuç ve state paylaşılmaz |
 | Auto: bütün kodu bir kez sınıflandırma | Yapılandırılmış OpenAI uyumlu sınıflandırıcı; hata durumunda engelleme |
-| Yeni kod başlayınca eski auto onayının kaybı | Aynı sunucudaki eski auto işleri sonraki değişiklik yapan yardımcı çağrılarda insan onayı ister |
+| Yeni kod başlayınca eski auto onayının kaybı | Aynı sunucudaki eski auto işleri sonraki değişiklik yapan yardımcı çağrılarda insan onayı ister; hook'un değiştirip sunduğu girdi de eski inceleme onayıyla sessizce çalışmaz, insan onayı ister |
 | Onay geri sayımı | Varsayılan iki dakika; karar yerel onay brokerinin web arayüzünde verilir (broker kökeni doğrulanır, hash zincirli denetim); süre sonunda otomatik ret |
 | Modelin kendi onayını verememesi | MCP araçları karar taşıyamaz, QuickJS doğrudan brokere erişemez. İzin verilen host shell/MCP programlarının yetkileri ayrıca değerlendirilmelidir: [SECURITY.md](SECURITY.md) |
 | Ön plan / arka plan süreleri | Varsayılan ve üst sınır 10 dakika / 2 saat |
@@ -53,9 +55,11 @@ ayar dosyalarının veya tüm hook referansının birebir uyumluluğu iddiası d
 Kural motoru ([code-mode-rules.mjs](code-mode-rules.mjs),
 [code-mode-policy.mjs](code-mode-policy.mjs)) [resmi permissions
 belgesindeki](https://code.claude.com/docs/en/permissions.md) şemaya uyar:
-`deny` → `plan` → hook'lar → `ask` (allow geçersiz kılamaz) → `allow` (mod
-onayını atlar) → modun kendi onayı; `deny` `bypassPermissions` dahil her
-modda engeller. `Edit(path)` kuralları native şemada olduğu gibi **Write
+`deny` → hook'lar → (hook `updatedInput` döndürürse `deny` ve `plan`
+kısıtının değiştirilmiş girdiye karşı yeniden) → `ask` (allow geçersiz
+kılamaz) → `allow` (mod onayını atlar) → modun kendi onayı; `deny`
+`bypassPermissions` dahil her modda, özgün ve değiştirilmiş girdinin
+her ikisine karşı engeller. `Edit(path)` kuralları native şemada olduğu gibi **Write
 araçlarını da kapsar**; `Write(path)` ise native şemada yol parametreli
 Write kurallarının kabul edilip hiç eşleşmemesi karşısında bu projenin
 **açık belgeli genişlemesidir** ve yalnızca Write aracına uygulanır.
@@ -86,6 +90,19 @@ Kalan farklar bilinçli ve çoğunlukla "daha çok onay ister" yönündedir:
 | `file`, `ps`, `docker` salt-okunur istisnaları | Belgelenen bayrak koşullarıyla salt-okunur kabul edilir | Salt-okunur kümesinde yer almaz → onay ister | Daha çok onay |
 | Simbolik bağlar | Hedefe göre yeniden denetlenebilir | Yol metnine göre denetlenir | Açık fark |
 
+Hook sözleşmesinde kalan farklar (native hook referansına göre):
+
+| Alan | Native davranış | Bu projede | Yön |
+| --- | --- | --- | --- |
+| `permissionDecision: defer` | Etkileşimsiz `-p` modunda karar ertelenir | Etkileşimli sunucuda açık hatayla reddedilir | Fail-closed |
+| Regex hook matcher | Araç adı regex'leriyle eşleşir | Yalnızca tam araç adları (`\|` ile ayrılmış) veya `*`; regex açık hatayla reddedilir | Fail-closed |
+| Hook zaman aşımı birimi | `timeout` saniye, varsayılan 600 sn | Saniye `timeoutMs`'e (100–600000 ms) çevrilir; varsayılan 5000 ms | Yapılandırma farkı |
+| Hook'tan dönen girdiye kurallar | Kurallar hook'un döndürdüğü girdiye karşı değerlendirilir | Aynı, ayrıca `deny`/`ask` özgün girdiye karşı da değerlendirilir | Daha çok engelleme |
+| `systemMessage` / `terminalSequence` | İstemciye terminal mesajı/sırası iletir | MCP sunucu yüzeyinde böyle bir kanal yoktur; açık hatayla reddedilir | Açık hata |
+| `auto`'da hook'un değiştirdiği girdi | Sınıflandırma yeni girdiyi incelemediği için ret edebilir | Daima insan onayı ister | Daha çok onay |
+| `REPL` girdisini `updatedInput` ile değiştirme | Native'te böyle bir araç yoktur | Açık hata: hook yürütülen kodu değiştiremez | Açık hata |
+| `if`/`async`/`shell`/`statusMessage`/`once`/`allowedEnvVars` alanları, `prompt`/`agent` türleri | Native'de desteklenir | Açık hatayla reddedilir; sessizce yok sayılmaz | Açık hata |
+
 ## Doğrulama
 
 Kural–araç–girdi–beklenen karar matrisi (`test-code-mode-rules.mjs`),
@@ -102,6 +119,14 @@ host'ta çıktı süzme ve iptal davranışları test edilir. İmajın SHA-256 e
 tüm build girdilerini kapsar; her girdi değişikliğinin etiketi değiştirdiği
 ayrıca doğrulanır. CI'da ayrı Linux Docker işi `--require-docker` kullanır;
 motor/build yokluğu bu işte SKIP değil hatadır.
+
+Hook çıktı sözleşmesi için de test eklendi: `updatedInput`/`additionalContext`
+ile `allow`/`ask`/`deny` karar önceliği (command, HTTP ve MCP hook biçimleri),
+hook zinciri, hata ve zaman aşımı, native `policy.hooks` adaptörü
+(matcher grupları, saniye birimli `timeout`, desteklenmeyen alanların açık
+reddi) ve girdi değişikliğinin `auto`/`plan`/`default` modlarındaki etkileri
+`test-code-mode-hooks.mjs`, `test-code-mode-rules.mjs`,
+`test-code-mode-host.mjs` ve uçtan uca `test-code-mode.mjs` ile test edilir.
 
 Gerçek model auto doğrulaması: `npm run test:auto:live -- --endpoint <url>
 --model <model>` (tek satır). Sonuç `live-verification/auto-report.json`'dadır;

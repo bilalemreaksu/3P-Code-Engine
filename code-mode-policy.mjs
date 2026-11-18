@@ -50,7 +50,24 @@ function validateAllow(allow) {
 }
 
 export function policyCheck(policy, cwd, sessionId, mode, decide = requestDecision, signal) {
-  const { deny = [], ask = [], allow = [], preToolUse = [], userPromptSubmit = [] } = policy;
+  const raw = policy ?? {};
+  // Native hooks configuration: policy.hooks = { PreToolUse: [...],
+  // UserPromptSubmit: [...] } with matcher groups inside. It cannot be
+  // combined with the flat keys; unknown keys are an explicit error.
+  let pre = raw.preToolUse;
+  let post = raw.userPromptSubmit;
+  if (raw.hooks !== undefined) {
+    if (!raw.hooks || typeof raw.hooks !== 'object' || Array.isArray(raw.hooks) ||
+        Object.keys(raw.hooks).some(key => !['PreToolUse', 'UserPromptSubmit'].includes(key))) {
+      throw new Error('Invalid policy hooks object: only PreToolUse and UserPromptSubmit are supported');
+    }
+    if (pre !== undefined || post !== undefined) {
+      throw new Error('Use either the policy.hooks object or the preToolUse/userPromptSubmit keys, not both');
+    }
+    pre = raw.hooks.PreToolUse ?? [];
+    post = raw.hooks.UserPromptSubmit ?? [];
+  }
+  const { deny = [], ask = [], allow = [] } = raw;
   for (const [listName, rules] of [['deny', deny], ['ask', ask], ['allow', allow]]) {
     if (!Array.isArray(rules) || rules.some(rule => typeof rule !== 'string' || !RULE_RE.test(rule))) {
       throw new Error(`Code Mode ${listName} rules must be arrays of tool names`);
@@ -65,32 +82,58 @@ export function policyCheck(policy, cwd, sessionId, mode, decide = requestDecisi
     }
   }
   validateAllow(allow);
-  validateHooks(preToolUse, 'PreToolUse');
-  validateHooks(userPromptSubmit, 'UserPromptSubmit');
+  const preToolUse = validateHooks(pre, 'PreToolUse');
+  const userPromptSubmit = validateHooks(post, 'UserPromptSubmit');
 
   const check = async (tool, input) => {
     signal?.throwIfAborted();
     const event = { hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, cwd, session_id: sessionId };
-    // Deny first: it blocks in every mode, including bypassPermissions.
+    // Deny first (against the submitted input): it blocks in every mode,
+    // including bypassPermissions.
     if (deny.some(rule => matchesRule(rule, tool, input, cwd, 'deny'))) throw new Error(`Code Mode policy denied ${tool}`);
+    // Hooks run before the mode checks: they can block in every mode
+    // (including plan) and return the input the call continues with.
+    const hookDecision = await runHooks(preToolUse, event, signal);
+    let checked = input;
+    let changed = false;
+    if (hookDecision.updatedInput !== undefined) {
+      // The executed code is what was submitted and classified; a hook
+      // cannot substitute it.
+      if (tool === 'REPL') throw new Error('Code Mode hooks cannot update the executed code (REPL input)');
+      checked = hookDecision.updatedInput;
+      changed = true;
+      event.tool_input = checked;
+    }
+    // Permission rules are evaluated against the input the hook returned,
+    // not the input the caller sent.
+    if (changed && deny.some(rule => matchesRule(rule, tool, checked, cwd, 'deny'))) throw new Error(`Code Mode policy denied ${tool}`);
     const edit = tool === 'Edit' || tool === 'Write';
     // Documented read-only set: the worker REPL and Read never prompt; a
     // Bash/PowerShell command that is entirely read-only does not either.
-    const readOnly = tool === 'REPL' || tool === 'Read' || (tool === 'Bash' && commandIsReadOnly(input?.command ?? '', cwd));
+    const readOnly = tool === 'REPL' || tool === 'Read' || (tool === 'Bash' && commandIsReadOnly(checked?.command ?? '', cwd));
+    // A hook allow cannot lift the plan restriction: plan auto-approves
+    // only read-only actions, and the restriction applies to what runs.
     if (mode === 'plan' && !readOnly) throw new Error(`Code Mode plan mode denied ${tool}`);
-    const hookDecision = await runHooks(preToolUse, event, signal);
     // An ask rule (or a hook that asks) forces a prompt that allow cannot
-    // override; an allow rule pre-approves the action the mode baseline
-    // would prompt for.
-    const askRule = ask.some(rule => matchesRule(rule, tool, input, cwd, 'ask'));
-    const covered = allow.some(rule => matchesRule(rule, tool, input, cwd, 'allow'));
+    // override; a hook allow or an allow rule pre-approves the action the
+    // mode baseline would prompt for.
+    const askRule = ask.some(rule => matchesRule(rule, tool, checked, cwd, 'ask'));
+    const covered = hookDecision.allow || allow.some(rule => matchesRule(rule, tool, checked, cwd, 'allow'));
     const modeBaseline = !readOnly && (mode === 'default' || (mode === 'acceptEdits' && !edit));
     if (hookDecision.ask || askRule || (!covered && modeBaseline)) await decide('approve', event);
     if (mode === 'auto' && tool === 'REPL') await decide('classify', event);
-    if (mode === 'auto' && !readOnly && !hookDecision.ask && !askRule && !modeBaseline && !covered) await decide('autoTool', event);
+    // Auto: the classifier reviewed the submitted code. A hook-changed
+    // input is not covered by that review and gets a fresh decision.
+    if (mode === 'auto' && !readOnly && !hookDecision.ask && !askRule && !modeBaseline && (!covered || changed)) {
+      await decide('autoTool', { ...event, inputChangedByHook: changed });
+    }
+    return { input: checked, context: hookDecision.additionalContext };
   };
   check.hasOutputHooks = userPromptSubmit.length > 0;
-  check.output = output => runHooks(userPromptSubmit, { hook_event_name: 'UserPromptSubmit', source: 'poll_event', cwd, session_id: sessionId, prompt: JSON.stringify(output) }, signal);
+  check.output = async output => {
+    const decision = await runHooks(userPromptSubmit, { hook_event_name: 'UserPromptSubmit', source: 'poll_event', cwd, session_id: sessionId, prompt: JSON.stringify(output) }, signal);
+    return { context: decision.additionalContext };
+  };
   return check;
 }
 

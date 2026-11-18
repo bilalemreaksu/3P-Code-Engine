@@ -24,6 +24,10 @@ let hostPolicy = false;
 let holdOutput = false;
 let outputClosed = false;
 const heldEvents = [];
+// additionalContext collected from hooks; the model receives it with the
+// final result, exactly like the updated inputs it refers to.
+const contexts = [];
+const noteContext = list => { for (const value of list ?? []) if (typeof value === 'string') contexts.push(value); };
 const progress = (kind, data) => {
   if (!connected() || outputClosed) return;
   const input = String(data);
@@ -46,8 +50,10 @@ async function listMcpServers() { return hostPolicy ? requestHost('listMcpServer
 async function listMcpTools(serverName) {
   if (typeof serverName !== 'string') throw new Error('Invalid MCP server name');
   if (hostPolicy) return requestHost('listMcpTools', { server: serverName });
-  await checkTool('McpListTools', { server: serverName });
-  return withMcp(serverName, client => client.listTools());
+  const { input, context } = await checkTool('McpListTools', { server: serverName });
+  noteContext(context);
+  if (typeof input?.server !== 'string' || !input.server) throw new Error('updated list input must carry a server name');
+  return withMcp(input.server, client => client.listTools());
 }
 async function callMcp(serverName, toolName, args = {}) {
   if (typeof toolName !== 'string') throw new Error('Invalid MCP tool name');
@@ -57,9 +63,12 @@ async function callMcp(serverName, toolName, args = {}) {
     record('mcp', { server: serverName, tool: toolName, isError: !!result.isError });
     return result;
   }
-  await checkTool(`mcp__${serverName}__${toolName}`, argumentsSnapshot);
+  // The check may return the input a hook replaced; that is what executes.
+  const { input, context } = await checkTool(`mcp__${serverName}__${toolName}`, argumentsSnapshot);
+  noteContext(context);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('updated MCP arguments must be an object');
   return withMcp(serverName, async client => {
-    const result = await client.callTool({ name: toolName, arguments: argumentsSnapshot });
+    const result = await client.callTool({ name: toolName, arguments: input });
     record('mcp', { server: serverName, tool: toolName, isError: !!result.isError });
     return result;
   });
@@ -69,12 +78,17 @@ async function run(command, { cwd = '.', timeoutMs = 60000 } = {}) {
   if (typeof command !== 'string' || !command.trim()) throw new Error('command must be a nonempty string');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 7200000) throw new Error('timeoutMs must be 100..7200000');
   const directory = path.resolve(cwd);
-  await checkTool('Bash', { command, cwd: directory, timeout: timeoutMs });
+  // The check may return the input a hook replaced; that is what executes.
+  const { input, context } = await checkTool('Bash', { command, cwd: directory, timeout: timeoutMs });
+  noteContext(context);
+  if (typeof input?.command !== 'string' || !input.command.trim()) throw new Error('updated Bash input must carry a command');
+  const effectiveCwd = typeof input.cwd === 'string' && input.cwd ? path.resolve(input.cwd) : directory;
+  const effectiveTimeout = typeof input.timeout === 'number' && Number.isInteger(input.timeout) && input.timeout >= 100 && input.timeout <= 7200000 ? input.timeout : timeoutMs;
   return new Promise((resolve, reject) => {
     const windows = process.platform === 'win32';
     const child = spawn(windows ? 'powershell.exe' : '/bin/sh', windows
-      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command]
-      : ['-c', command], { cwd: directory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', input.command]
+      : ['-c', input.command], { cwd: effectiveCwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', timedOut = false, truncated = false;
     const append = (current, data) => {
       const s = data.toString();
@@ -87,9 +101,9 @@ async function run(command, { cwd = '.', timeoutMs = 60000 } = {}) {
       timedOut = true;
       if (windows && child.pid) spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' }).unref();
       else child.kill('SIGKILL');
-    }, timeoutMs);
+    }, effectiveTimeout);
     child.on('error', e => { clearTimeout(timer); reject(e); });
-    child.on('close', (exitCode, signal) => { clearTimeout(timer); resolve({ command, exitCode, signal, timedOut, truncated, stdout, stderr }); });
+    child.on('close', (exitCode, signal) => { clearTimeout(timer); resolve({ command: input.command, exitCode, signal, timedOut, truncated, stdout, stderr }); });
   });
 }
 
@@ -113,20 +127,25 @@ onMessage(async message => {
     holdOutput = background && checkTool.hasOutputHooks;
     await checkTool('REPL', { code });
     const tools = {
-      read: async file => { const absolute = path.resolve(file); await checkTool('Read', { file_path: absolute }); const content = await readFile(absolute, 'utf8'); if (content.length > 1024 * 1024) throw new Error('file exceeds 1 MiB'); record('read', { file: absolute }); return content; },
-      write: async (file, content) => { if (typeof content !== 'string') throw new Error('content must be a string'); const absolute = path.resolve(file); await checkTool('Write', { file_path: absolute, content }); await writeFile(absolute, content, 'utf8'); record('write', { file: absolute, bytes: Buffer.byteLength(content) }); return { file: absolute, bytes: Buffer.byteLength(content) }; },
+      // Each helper executes the input the permission check returned: when
+      // a hook replaced it, that replacement is what runs, is recorded and
+      // was shown in any approval.
+      read: async file => { const absolute = path.resolve(file); const { input, context } = await checkTool('Read', { file_path: absolute }); noteContext(context); if (typeof input?.file_path !== 'string' || !input.file_path) throw new Error('updated Read input must carry a file_path'); const content = await readFile(input.file_path, 'utf8'); if (content.length > 1024 * 1024) throw new Error('file exceeds 1 MiB'); record('read', { file: input.file_path }); return content; },
+      write: async (file, content) => { if (typeof content !== 'string') throw new Error('content must be a string'); const absolute = path.resolve(file); const { input, context } = await checkTool('Write', { file_path: absolute, content }); noteContext(context); if (typeof input?.file_path !== 'string' || !input.file_path || typeof input.content !== 'string') throw new Error('updated Write input must carry file_path and content'); await writeFile(input.file_path, input.content, 'utf8'); record('write', { file: input.file_path, bytes: Buffer.byteLength(input.content) }); return { file: input.file_path, bytes: Buffer.byteLength(input.content) }; },
       edit: async (file, oldText, newText) => {
         if (typeof oldText !== 'string' || !oldText || typeof newText !== 'string') throw new Error('edit requires a nonempty oldText and string newText');
         const absolute = path.resolve(file);
-        await checkTool('Edit', { file_path: absolute, old_string: oldText, new_string: newText });
-        const before = await readFile(absolute, 'utf8');
-        const index = before.indexOf(oldText);
-        if (index < 0 || before.indexOf(oldText, index + 1) !== -1) throw new Error('oldText must match exactly once');
-        await writeFile(absolute, before.slice(0, index) + newText + before.slice(index + oldText.length), 'utf8');
-        record('edit', { file: absolute, oldText: oldText.slice(0, 2000), newText: newText.slice(0, 2000), truncated: oldText.length > 2000 || newText.length > 2000 });
-        return { file: absolute, changed: oldText !== newText };
+        const { input, context } = await checkTool('Edit', { file_path: absolute, old_string: oldText, new_string: newText });
+        noteContext(context);
+        if (typeof input?.file_path !== 'string' || !input.file_path || typeof input.old_string !== 'string' || !input.old_string || typeof input.new_string !== 'string') throw new Error('updated Edit input must carry file_path, old_string and new_string');
+        const before = await readFile(input.file_path, 'utf8');
+        const index = before.indexOf(input.old_string);
+        if (index < 0 || before.indexOf(input.old_string, index + 1) !== -1) throw new Error('oldText must match exactly once');
+        await writeFile(input.file_path, before.slice(0, index) + input.new_string + before.slice(index + input.old_string.length), 'utf8');
+        record('edit', { file: input.file_path, oldText: input.old_string.slice(0, 2000), newText: input.new_string.slice(0, 2000), truncated: input.old_string.length > 2000 || input.new_string.length > 2000 });
+        return { file: input.file_path, changed: input.old_string !== input.new_string };
       },
-      run: async (...args) => { const result = await run(...args); record('run', { command: args[0].slice(0, 2000), exitCode: result.exitCode, timedOut: result.timedOut }); return result; },
+      run: async (...args) => { const result = await run(...args); record('run', { command: result.command.slice(0, 2000), exitCode: result.exitCode, timedOut: result.timedOut }); return result; },
       callMcp,
       listMcpServers,
       listMcpTools,
@@ -147,12 +166,14 @@ onMessage(async message => {
     result = structuredClone(result);
     if (holdOutput) {
       try {
-        await checkTool.output({ result, events: heldEvents });
+        const out = await checkTool.output({ result, events: heldEvents });
+        noteContext(out?.context);
         for (const event of heldEvents) if (connected()) channelSend(event, () => {});
       } catch (error) {
         result = { ok: false, outputBlocked: true, error: `Code output blocked: ${error.message}` };
       }
     }
+    if (contexts.length) result.additionalContext = contexts.join('\n\n');
     await sendFinal(result);
   } finally {
     // Do not let forgotten timers keep the worker alive.

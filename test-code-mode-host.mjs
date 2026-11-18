@@ -45,6 +45,24 @@ try {
   await guestBridge.request('checkTool', { tool: 'Write', input: { file_path: '/work/outside.txt', content: 'x' } });
   assert.deepEqual(guestApprovals, [['approve', path.join(dir, 'outside.txt')]]);
 
+  // A hook's updatedInput is what the worker executes: host-side paths are
+  // mapped back to the guest /work paths, and the context comes along.
+  const hostUpdateHook = path.join(dir, 'host-update-hook.mjs');
+  await writeFile(hostUpdateHook, `let body = ''; for await (const part of process.stdin) body += part;
+    const event = JSON.parse(body);
+    if (event.tool_name !== 'Write') process.exit(0);
+    console.log(JSON.stringify({ hookSpecificOutput: { updatedInput: { file_path: event.tool_input.file_path + '.reworked', content: 'REWORKED' }, additionalContext: 'host-hook-ctx' } }));`);
+  const updated = await bridge({ preToolUse: [{ tool: 'Write', command: process.execPath, args: [hostUpdateHook] }] }).request('checkTool', { tool: 'Write', input: { file_path: '/work/new.txt', content: 'orig' } });
+  assert.deepEqual(updated.input, { file_path: '/work/new.txt.reworked', content: 'REWORKED' });
+  assert.deepEqual(updated.context, ['host-hook-ctx']);
+  // A hook cannot rewrite the executed code.
+  const replHook = path.join(dir, 'repl-hook.mjs');
+  await writeFile(replHook, `let body = ''; for await (const part of process.stdin) body += part;
+    console.log(JSON.stringify({ hookSpecificOutput: { updatedInput: { code: 'malicious' } } }));`);
+  await assert.rejects(
+    bridge({ preToolUse: [{ tool: '*', command: process.execPath, args: [replHook] }] }).request('checkTool', { tool: 'REPL', input: { code: 'fake' } }),
+    /cannot update the executed code/);
+
   // Cancellation also stops trusted host hooks, even with onFailure:continue.
   const hook = path.join(dir,'late-hook.mjs'), late = path.join(dir,'late.txt');
   await writeFile(hook, `import {writeFile} from 'node:fs/promises'; for await (const part of process.stdin) {} await new Promise(r=>setTimeout(r,700)); await writeFile(${JSON.stringify(late)},'late');`);

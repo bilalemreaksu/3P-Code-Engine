@@ -90,9 +90,11 @@ eşleşmez). Kuruluma kabul edilen `allow` kuralları yalnızca araç adı veya
 yazılmaz. Negasyon (`!`) desenleri yeniden yorumlanmadan kurulumda
 reddedilir.
 
-Öncelik her çağrıda: `deny` (tüm modlarda, `bypassPermissions` dahil) →
-`plan` kısıtı → hook'lar → `ask` (allow geçersiz kılamaz) → `allow` (modun
-onayı atlar) → modun kendi onayı. `deny` çağrıyı engeller. `ask` ve mod
+Öncelik her çağrıda: `deny` → hook'lar → hook `updatedInput` döndürürse
+`deny` ve `plan` kısıtının değiştirilmiş girdiye karşı yeniden
+denetlenmesi → `ask` (allow geçersiz kılamaz) → `allow` (modun onayı
+atlar) → modun kendi onayı. `deny` tüm modlarda, `bypassPermissions` dahil,
+özgün ve değiştirilmiş girdinin her ikisine karşı engeller. `ask` ve mod
 onayı yerel insan onay brokerinin web arayüzünde ister: iş, insan karar
 verene kadar bekler. Ön plan ve arka plan çağrıları aynı broker üzerinden onaylanır;
 model, `code_status` ile bekleyen onayı yalnızca **görebilir** (işlem,
@@ -114,6 +116,19 @@ mutlak olmalıdır; `args` ayrı argümanlardır, kabuk komut metni değildir.
 - `{"decision":"block","reason":"..."}` her zaman engeller.
   `hookSpecificOutput.permissionDecision` için `allow`, `deny` ve `ask`
   desteklenir. `allow` açık `deny` kurallarını geçersiz kılmaz.
+- `hookSpecificOutput.updatedInput` yalnızca `PreToolUse`'ta desteklenir ve
+  girdi nesnesinin **tamamını** değiştirir: çalışan girdi, kuralların
+  denetlediği girdi, onay önizlemesinde görünen girdi ve olay kaydına
+  düşen girdi aynı nesnedir. Zincirde sonraki hook, öncekinin
+  `updatedInput` çıktısını görür. `REPL` kodu hook ile değiştirilemez
+  (açık hata).
+- `hookSpecificOutput.additionalContext` (dize veya dize dizisi; toplam en
+  fazla 64 KiB) sonuçla modele iletilir; `permissionDecisionReason` onay
+  gerekçesi olarak gösterilir.
+- Hook `allow`'ı yalnızca modun onayını atlar: `deny`/`ask` kuralları,
+  `plan` kısıtı ve auto sınıflandırmayı geçersiz kılamaz. `auto` modunda
+  hook tarafından değiştirilen girdi, sınıflandırmanın incelediği girdi
+  olmadığı için insan onayı ister.
 
 ### Çıktı denetimi ve diğer hook türleri
 
@@ -146,6 +161,18 @@ aracını çağırır. İsteğe bağlı `arguments` nesnesine olay alanları ekl
 olay alanları geçersiz kılınamaz. Araç `structuredContent` veya JSON metni
 döndürür. Bu hook çağrıları güvenilen politika yapılandırmasıdır; kendileri
 yeniden `PreToolUse` tetikleyip sonsuz döngüye girmez.
+
+Native Claude Code hook yapılandırması için uyumluluk adaptörü: politika
+alanı `hooks: { "PreToolUse": [...], "UserPromptSubmit": [...] }` olarak da
+verilebilir (düz `preToolUse`/`userPromptSubmit` alanlarıyla aynı anda
+kullanılamaz); gruplar `matcher` + `hooks` dizisi taşır. `matcher` yalnızca
+tam araç adlarını (`|` ile ayrılmış) veya `*` kabul eder; regex değildir.
+Native `timeout` **saniye** birimindedir ve `timeoutMs` (milisaniye) ile
+aynı anda verilemez. Native MCP `tool`/`input` alanları `mcpTool`/
+`arguments`'a çevrilir. Desteklenmeyen alanlar ve türler (`if`, `async`,
+`shell`, `statusMessage`, `once`, `allowedEnvVars`; `prompt`/`agent` türleri)
+ile desteklenmeyen çıktı alanları (`systemMessage`, `terminalSequence`) ve
+`defer` kararı sessizce yok sayılmaz — açık hatayla reddedilir.
 
 ### İzin modları
 
@@ -263,7 +290,9 @@ host'taki yapılandırılmış MCP sunucularına erişir. Yapılandırma ve anah
 konteynere gönderilmez. İzin, auto, hook ve onay denetimi host'ta yapılır;
 ham RPC de bu denetimi atlayamaz. Hook'lar host'ta çalışır: komut/script
 yolları host yolları, olayın `cwd` alanı host proje yoludur; dosya yardımcılarının
-`file_path` alanı konuk yolunu (`/work/...`) korur. MCP argümanları aynen
+`file_path` alanı konuk yolunu (`/work/...`) korur. Hook'un `updatedInput`
+ile değiştirdiği dosya yolları da bu host→`/work` eşlemesinden geçer;
+MCP argümanları aynen
 iletilir; host dosyası isteyen bir dış araç için host yolu verilmelidir.
 Arka plan çıktı hook'ları da host'ta uygulanır. Onay akışı değişmez:
 broker host'ta kalır, insan aynı web sayfasından karar verir. Sunucu,

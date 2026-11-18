@@ -121,6 +121,26 @@ try {
   assert.match((await call("await callMcp('fixture', 'echo');")).result.error, /policy denied mcp__fixture__echo/);
   assert.match((await call('await $`Write-Output hook-blocked`.nothrow();', { sessionId: 'policy-test' })).result.error, /hook refused Bash/);
   assert.equal((await call('await run("Write-Output permitted");', { sessionId: 'policy-test' })).result.ok, true);
+  {
+    // Hook contract end to end: the updatedInput is the executed input —
+    // file, record and model result all use it — and additionalContext
+    // reaches the model with the result.
+    const updateHook = path.join(dir, 'update-hook.mjs');
+    await writeFile(updateHook, `let body = ''; for await (const part of process.stdin) body += part;
+      const event = JSON.parse(body);
+      if (event.tool_name !== 'Write') process.exit(0);
+      console.log(JSON.stringify({ hookSpecificOutput: { permissionDecision: 'allow', updatedInput: { file_path: event.tool_input.file_path.replace(/\\.txt$/, '-hooked.txt'), content: 'HOOK' }, additionalContext: 'hook-says-production' } }));`);
+    await writeFile(policyPath, JSON.stringify({ preToolUse: [{ tool: 'Write', command: process.execPath, args: [updateHook] }] }));
+    const hooked = await call(`await write('hook-target.txt', 'original'); return 'done';`);
+    assert.equal(hooked.result.ok, true, hooked.result.error);
+    assert.equal(hooked.result.result, 'done');
+    assert.equal(hooked.result.additionalContext, 'hook-says-production');
+    const written = hooked.result.operations.find(item => item.operation === 'write');
+    assert.equal(written.file, path.join(dir, 'hook-target-hooked.txt'));
+    assert.equal(await readFile(path.join(dir, 'hook-target-hooked.txt'), 'utf8'), 'HOOK');
+    await assert.rejects(readFile(path.join(dir, 'hook-target.txt')), { code: 'ENOENT' });
+    await writeFile(policyPath, '{}');
+  }
   await writeFile(policyPath, '{"deny":["REPL"]}');
   assert.match((await call('1 + 2')).result.error, /policy denied REPL/);
   await writeFile(policyPath, '{}');
@@ -163,6 +183,14 @@ try {
   const mcpAllowed = await finished(await start(`log('allowed-log'); return 'allowed-output';`));
   assert.equal(mcpAllowed.result.ok, true); assert.equal(mcpAllowed.result.result, 'allowed-output');
   assert.ok(mcpAllowed.events.some(event => event.data === 'allowed-log'));
+  await writeFile(policyPath, JSON.stringify({ userPromptSubmit: [{ command: process.execPath, args: [path.join(dir, 'ctx-output-hook.mjs')] }] }));
+  await writeFile(path.join(dir, 'ctx-output-hook.mjs'), `let body = ''; for await (const chunk of process.stdin) body += chunk;
+    const event = JSON.parse(body);
+    if (event.source !== 'poll_event' || event.hook_event_name !== 'UserPromptSubmit') process.exit(2);
+    console.log(JSON.stringify({ hookSpecificOutput: { additionalContext: 'out-ctx' } }));`);
+  const ctxOut = await finished(await start(`return 'with-context';`));
+  assert.equal(ctxOut.result.result, 'with-context');
+  assert.equal(ctxOut.result.additionalContext, 'out-ctx');
   await writeFile(policyPath, JSON.stringify({ userPromptSubmit: [{ command: process.execPath, args: [path.join(dir, 'missing-hook.mjs')], onFailure: 'continue' }] }));
   assert.equal((await finished(await start(`return 'continue-output';`))).result.result, 'continue-output');
   await writeFile(policyPath, '{}');
@@ -235,6 +263,24 @@ try {
     assert.equal(await readFile(path.join(dir, 'sample.txt'), 'utf8'), 'approved\n');
     const record = (await client.callTool({ name: 'code_status', arguments: { jobId: item.jobId } })).content.map(item => item.text).join('\n');
     assert.match(record, /- after\r?\n\s+\+ approved/);
+  }
+  {
+    // The human sees the hook-updated input: the approval preview and the
+    // executed file are the replacement, not the original request.
+    const askUpdateHook = path.join(dir, 'ask-update-hook.mjs');
+    await writeFile(askUpdateHook, `let body = ''; for await (const part of process.stdin) body += part;
+      const event = JSON.parse(body);
+      if (event.tool_name !== 'Write') process.exit(0);
+      console.log(JSON.stringify({ hookSpecificOutput: { updatedInput: { file_path: event.tool_input.file_path.replace(/\\.txt$/, '-asked.txt'), content: 'HOOK-ASKED' } } }));`);
+    await writeFile(policyPath, JSON.stringify({ ask: ['Write'], preToolUse: [{ tool: 'Write', command: process.execPath, args: [askUpdateHook] }] }));
+    const askedCall = call(`await write('asked.txt', 'orig');`);
+    const askedItem = await waitForPending(x => x.tool === 'Write' && x.file?.endsWith('asked-asked.txt'), 'hook-updated Write');
+    assert.match(askedItem.preview, /HOOK-ASKED/);
+    assert.equal(await decideApproval(askedItem.nonce, 'approve', 'ui'), 200);
+    const asked = await askedCall;
+    assert.equal(asked.result.ok, true, asked.result.error);
+    assert.equal(await readFile(path.join(dir, 'asked-asked.txt'), 'utf8'), 'HOOK-ASKED');
+    await writeFile(policyPath, '{}');
   }
   {
     // Capability evidence: this client declared no elicitation support, and
@@ -312,6 +358,19 @@ try {
     await approvePendingWrite('auto-gated.txt');
     assert.equal((await askedDone).result.result, 'gated-complete');
     assert.equal(autoApprovals, 2);
+    // A hook that changes the input after the auto review cannot run under
+    // the old review: the human approves the changed input.
+    const autoUpdateHook = path.join(dir, 'auto-update-hook.mjs');
+    await writeFile(autoUpdateHook, `let body = ''; for await (const part of process.stdin) body += part;
+      const event = JSON.parse(body);
+      if (event.tool_name !== 'Write') process.exit(0);
+      console.log(JSON.stringify({ hookSpecificOutput: { updatedInput: { file_path: event.tool_input.file_path + '.reworked', content: 'REWORKED' } } }));`);
+    await writeFile(policyPath, JSON.stringify({ preToolUse: [{ tool: 'Write', command: process.execPath, args: [autoUpdateHook] }] }));
+    const reworkedCall = call(`await write('auto-reworked.txt', 'original'); return 'reworked-done';`);
+    const reworked = await waitForPending(x => x.tool === 'Write' && x.file?.endsWith('auto-reworked.txt.reworked'), 'hook-reworked Write');
+    assert.equal(await decideApproval(reworked.nonce, 'approve', 'ui'), 200);
+    assert.equal((await reworkedCall).result.ok, true);
+    assert.equal(await readFile(path.join(dir, 'auto-reworked.txt.reworked'), 'utf8'), 'REWORKED');
     await writeFile(policyPath, '{}');
     await client.close();
 

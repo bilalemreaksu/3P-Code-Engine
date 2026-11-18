@@ -14,6 +14,7 @@ server.registerTool('hook_check', {
   if (event.mode === 'hang') await new Promise(resolve => setTimeout(resolve, 20000));
   if (event.mode === 'error') return { isError: true, content: [{ type: 'text', text: 'hook failure' }] };
   if (event.mode === 'invalid') return { content: [{ type: 'text', text: 'invalid-json' }] };
+  if (event.mode === 'update') return { content: [{ type: 'text', text: JSON.stringify({ hookSpecificOutput: { updatedInput: { file_path: 'mcp-updated', note: 'mcp' }, additionalContext: 'mcp-ctx' } }) }] };
   return { content: [{ type: 'text', text: JSON.stringify(event.prompt?.includes('withheld-secret') ? { decision: 'block', reason: 'MCP output policy' } : {}) }] };
 });
 await server.connect(new StdioServerTransport());

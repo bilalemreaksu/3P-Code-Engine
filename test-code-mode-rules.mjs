@@ -24,6 +24,14 @@ const hookBlock = { tool: 'Bash', command: process.execPath, args: [path.join(di
 const hookAllow = { tool: 'Bash', command: process.execPath, args: [path.join(dir, 'hook-allow.mjs')] };
 await writeFile(path.join(dir, 'hook-block.mjs'), `process.exitCode = 2;`);
 await writeFile(path.join(dir, 'hook-allow.mjs'), `console.log(JSON.stringify({ hookSpecificOutput: { permissionDecision: 'allow' } }));`);
+await writeFile(path.join(dir, 'hook-update.mjs'), `let body = ''; for await (const part of process.stdin) body += part;
+  const event = JSON.parse(body);
+  console.log(JSON.stringify({ hookSpecificOutput: { updatedInput: { command: process.argv[2], cwd: event.tool_input?.cwd, timeout: event.tool_input?.timeout } } }));`);
+await writeFile(path.join(dir, 'hook-update-allow.mjs'), `let body = ''; for await (const part of process.stdin) body += part;
+  const event = JSON.parse(body);
+  console.log(JSON.stringify({ hookSpecificOutput: { permissionDecision: 'allow', updatedInput: { command: process.argv[2], cwd: event.tool_input?.cwd } } }));`);
+const hookUpdate = command => ({ tool: 'Bash', command: process.execPath, args: [path.join(dir, 'hook-update.mjs'), command] });
+const hookUpdateAllow = command => ({ tool: 'Bash', command: process.execPath, args: [path.join(dir, 'hook-update-allow.mjs'), command] });
 
 const run = async (policy, mode, tool, input) => {
   const decisions = [];
@@ -172,6 +180,17 @@ const cases = [
   ['PR8 bypassPermissions still applies ask', { ask: ['Edit'] }, B, 'Edit', { file_path: file('a') }, 'ask'],
   ['PR9 bypassPermissions applies no mode approval', {}, B, 'Edit', { file_path: file('a') }, 'allow'],
   ['PR10 rules mode runs unmatched commands silently', {}, R, 'Bash', bash('npm test'), 'allow'],
+  // --- Hook decisions against rules and modes ---
+  ['PR11 a hook allow suppresses the mode baseline', { preToolUse: [hookAllow] }, D, 'Bash', bash('npm test'), 'allow'],
+  ['PR12 a hook allow cannot lift the plan restriction', { preToolUse: [hookAllow] }, P, 'Bash', bash('npm test'), 'plan'],
+  ['PR13 deny beats a hook allow', { deny: ['Bash(npm test *)'], preToolUse: [hookAllow] }, R, 'Bash', bash('npm test'), 'deny'],
+  ['U1 a read-only updated input needs no prompt', { preToolUse: [hookUpdate('ls')] }, D, 'Bash', bash('npm test'), 'allow'],
+  ['U2 the updated input can fall under a deny rule', { deny: ['Bash(rm *)'], preToolUse: [hookUpdate('rm x')] }, R, 'Bash', bash('ls'), 'deny'],
+  ['U3 the updated input can fall under an ask rule', { ask: ['Bash(rm *)'], preToolUse: [hookUpdate('rm x')] }, D, 'Bash', bash('ls'), 'ask'],
+  ['U4 an allow-updated input still goes through the auto review', { preToolUse: [hookUpdateAllow('npm run build')] }, AUTO, 'Bash', bash('npm test'), 'auto'],
+  ['U5 plan re-checks the updated input (read-only runs)', { preToolUse: [hookUpdate('ls')] }, P, 'Bash', bash('npm test'), 'allow'],
+  ['U6 plan denies an updated non-read-only input', { preToolUse: [hookUpdate('npm test')] }, P, 'Bash', bash('ls'), 'plan'],
+  ['U7 an allow rule covers the updated input', { allow: ['Bash(npm run *)'], preToolUse: [hookUpdate('npm run build')] }, D, 'Bash', bash('git push origin main'), 'allow'],
   // --- acceptEdits and auto modes ---
   ['M1 acceptEdits auto-approves Edit', {}, A, 'Edit', { file_path: file('a') }, 'allow'],
   ['M2 acceptEdits auto-approves read-only commands', {}, A, 'Bash', bash('ls'), 'allow'],
@@ -183,6 +202,40 @@ const cases = [
 ];
 for (const [name, policy, mode, tool, input, want] of cases) await row(name, policy, mode, tool, input, want);
 
+// --- Hook result contract: the checked input and context travel with the result ---
+await writeFile(path.join(dir, 'hook-ctx.mjs'), `let body = ''; for await (const part of process.stdin) body += part;
+  const event = JSON.parse(body);
+  console.log(JSON.stringify({ hookSpecificOutput: { updatedInput: { command: 'ls', cwd: event.tool_input?.cwd }, additionalContext: ['ctx-1', 'ctx-2'] } }));`);
+{
+  const decisions = [];
+  const check = policyCheck({ preToolUse: [{ tool: 'Bash', command: process.execPath, args: [path.join(dir, 'hook-ctx.mjs')] }] }, dir, undefined, 'default', async (kind, event) => { decisions.push([kind, event]); });
+  const out = await check('Bash', bash('npm test'));
+  assert.deepEqual(out.input, { command: 'ls' });
+  assert.deepEqual(out.context, ['ctx-1', 'ctx-2']);
+  assert.equal(decisions.length, 0);
+}
+{
+  // A hook cannot replace the executed code.
+  const replCheck = policyCheck({ preToolUse: [{ tool: '*', command: process.execPath, args: [path.join(dir, 'hook-update.mjs'), 'ls'] }] }, dir, undefined, 'default', () => {});
+  await assert.rejects(replCheck('REPL', { code: '1 + 1' }), /cannot update the executed code/);
+}
+{
+  // Auto mode: a hook-changed input is not covered by the code review and
+  // forces a fresh decision carrying the changed-input flag.
+  const autoDecisions = [];
+  const check = policyCheck({ preToolUse: [hookUpdate('npm run build')] }, dir, undefined, 'auto', async (kind, event) => { autoDecisions.push([kind, event]); });
+  await check('Bash', bash('git push origin main'));
+  assert.equal(autoDecisions.length, 1);
+  assert.equal(autoDecisions[0][0], 'autoTool');
+  assert.equal(autoDecisions[0][1].tool_input.command, 'npm run build');
+  assert.equal(autoDecisions[0][1].inputChangedByHook, true);
+  // An unchanged, hook-allowed input stays covered by the review.
+  const unchanged = [];
+  const plain = policyCheck({ preToolUse: [hookAllow] }, dir, undefined, 'auto', async (kind, event) => { unchanged.push([kind, event]); });
+  await plain('Bash', bash('npm run build'));
+  assert.equal(unchanged.length, 0);
+}
+
 // --- policy validation ---
 const validation = [
   ['an allow entry must be a string', { allow: [1] }, /allow/],
@@ -191,6 +244,9 @@ const validation = [
   ['an allow mcp server rule is valid', { allow: ['mcp__fixture__*'] }, null],
   ['a negation pattern is rejected, not reinterpreted', { deny: ['Read(!.env)'] }, /negat/i],
   ['a Write(path) extension rule is valid', { deny: ['Write(src/**)'] }, null],
+  ['a policy.hooks object maps to the flat hook lists', { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ command: process.execPath, args: [path.join(dir, 'hook-allow.mjs')] }] }] } }, null],
+  ['policy.hooks cannot mix with preToolUse', { hooks: { PreToolUse: [] }, preToolUse: [hookBlock] }, /either/],
+  ['an unknown policy.hooks key is rejected', { hooks: { PostToolUse: [] } }, /PreToolUse and UserPromptSubmit/],
 ];
 for (const [name, policy, want] of validation) {
   let error;

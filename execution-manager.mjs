@@ -284,7 +284,7 @@ export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, 
         if (!decide) throw new Error('Auto mode requires a classifier');
         await decide('classify', event, controller.signal);
         job.reviewValid = epoch === autoEpoch;
-      } else if (kind !== 'autoTool' || !job.reviewValid) {
+      } else if (kind !== 'autoTool' || !job.reviewValid || event?.inputChangedByHook) {
         await queueApproval(job, event, controller.signal);
       }
     };
@@ -365,9 +365,10 @@ export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, 
       if (result && typeof result.ok === 'boolean' && !settled && !finalizing) {
         if (background && bridge?.hasOutputHooks) {
           finalizing = true;
-          void bridge.checkOutput({ result, events: heldEvents }).then(() => {
+          void bridge.checkOutput({ result, events: heldEvents }).then(out => {
             if (settled) return;
             job.events = heldEvents;
+            if (out?.context?.length) result = { ...result, additionalContext: [result.additionalContext, ...out.context].filter(Boolean).join('\n\n') };
             finish(result);
           }, error => finish({ ok: false, outputBlocked: true, error: `Code output blocked: ${error.message}` }));
         } else finish(result);
