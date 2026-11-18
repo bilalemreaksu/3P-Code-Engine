@@ -1,101 +1,50 @@
-# 3P Code Mode v0.12 — yetki sınırları
+# Güvenlik modeli
 
-Varsayılan `autoApprove`, insan onayı ve classifier olmadan yürütür; `ask`
-kuralları ve hook'un `ask` kararı otomatik geçilir. Açık `deny`, engelleyen
-hook'lar, çıktı denetimi ve QuickJS/Docker sınırları uygulanır. Broker ve
-classifier hakkındaki bölümler açıkça seçilen eski izin modları içindir.
+3P Code Engine modelin ürettiği JavaScript'i QuickJS içinde çalıştırır. Dosya, kabuk ve MCP erişimi denetimli yardımcılar üzerinden yapılır. Docker seçeneği dosya ve kabuk işlerine ek işletim sistemi izolasyonu sağlar. Uygulanacak yetki sınırını proje etkinleştirmesi, izin modu, politika ve çalıştırma ortamı birlikte belirler.
 
-## JavaScript motoru
+## Güvenilen yapılandırma
 
-Üretilen JavaScript, `code-mode-runtime.mjs` içindeki QuickJS WebAssembly
-motorunda çalışır. Host nesneleri guest'e verilmez; yalnızca JSON argümanlar
-ve sonuçlar sınırı geçer. Guest'te `process`, `require`, `Buffer`, `fetch`
-veya Node modül yükleyicisi yoktur. Function/constructor erişimi QuickJS'te
-kalır. Host fonksiyon prototipleri paylaşılmaz. Bu, v0.11'deki doğrudan
-`import('node:fs')` yolunu kaldırır.
+- Proje etkinleştirmesi kullanıcıya ait `CODE_MODE_DATA_DIR/settings.json` dosyasından okunur. Proje yolu açıkça kaydedilir. Dosya yoksa tüm projeler kapalı başlar. Bozuk ayar yürütmeyi durdurur.
+- Politika kaynağı `CODE_MODE_POLICY_PATH` veya motorun [varsayılan politika dosyasıdır](code-mode-policy.json). Desktop'ta MCP sunucusunun ortamı, terminalde ise komut satırı ve ortam izin modunu belirler.
+- Varsayılan `autoApprove`, insan onayı veya sınıflandırıcı çağrısı yapmaz. `ask` kararlarını otomatik geçer. Açık `deny` ve engelleyici hook'lar tüm modlarda uygulanır. `bypassPermissions`, açık `ask` kararlarını da uygular. [İzin modları ve öncelik sırası](README-code-mode.md#izin-modları)
+- `auto` seçildiğinde sınıflandırıcı modele kod, çalışma dizini ve varsa gerçek terminal kullanıcı niyeti gönderilir. Hata veya geçersiz karar yürütmeyi engeller. Sınıflandırıcı sonuçları, değerlendirilen örnekler ve yapılandırılan model ile sınırlıdır.
 
-Dosya, kabuk ve MCP işlemleri denetlenen yardımcılarla yapılır. REPL hook'u ve
-auto classifier kod başlamadan önce çalışır. Her yardımcı ayrıca deny/ask,
-izin modu ve PreToolUse denetiminden geçer. QuickJS belleği 64 MiB, stack'i
-1 MiB ile sınırlıdır; interrupt handler CPU döngülerine süre sınırı uygular.
-Üst süreç toplam süreyi ve iptali denetler. Son ifade Acorn ile ayrıştırılır;
-host'ta eval edilmez. QuickJS/WASM veya Node'da bilinmeyen bir açık
-bulunmadığına dair mutlak güvenlik iddiası değildir.
+## QuickJS sınırı
 
-## Kabuk ve dış MCP yetkileri
+`code-mode-runtime.mjs`, model kodunu QuickJS WebAssembly çalışma ortamında yürütür. Host ve JavaScript bağlamı arasında araç argümanları ve sonuçları veri olarak aktarılır. JavaScript bağlamının doğrudan `process`, `require`, `Buffer`, `fetch` ve Node modüllerine erişimi yoktur. Acorn, son üst düzey ifadeyi ayrıştırır. Yürütmenin yapıldığı yer QuickJS bağlamıdır.
 
-`run`/`$` bir Bash araç çağrısı olarak denetlenir. İzin verilen programın
-içindeki her dosya/ağ işlemi ayrı Read/Write çağrısına çevrilmez. Örneğin
-Write reddi, ayrıca izin verilen bir kabuk programının yazmasını engellemez.
-Komut metni kuralları hesaplanmış/eval edilmiş her davranışı çözümlemez.
+JavaScript belleği 64 MiB, stack 1 MiB ile sınırlıdır. Interrupt handler CPU döngülerini ve yürütücü toplam süreyi denetler. Ele alınmamış yardımcı hataları, JSON'a çevrilemeyen sonuçlar ve bağlam çalışırken zamanlayıcı hataları başarısız yürütme olarak döner. Bu sınırlar, motor veya platform hatalarından bağımsız bir güvenlik garantisi vermez.
 
-Docker kapalıysa izin verilen kabuk host hesabının yetkileriyle çalışır:
-proje dışına, engine/veri dosyalarına veya yerel brokere erişebilir.
-Brokerin Origin kontrolü browser kaynak kontrolüdür; OS yetkisi olan bir
-program Origin taklit edebilir. MCP araçlarının karar taşıyamaması, ayrıca
-izin verilmiş host kabuğunun mutlak olarak onay taklit edemeyeceği anlamına
-gelmez. Helper politikası OS sandbox'ı değildir.
+## Kabuk ve dış araçlar
 
-`review_changes`, `review_and_fix`, `reviewAfter` ayrı kabuk/model akışlarıdır;
-yalnızca rules/bypassPermissions/autoApprove modlarında kullanılabilir. Terminal agent
-bunları modele sunmaz.
+`run` ve etiketli kabuk şablonu `Bash` aracı olarak denetlenir. Kabuk programının kendi işlemleri ayrı `Read` veya `Write` çağrılarına dönüşmez. Örneğin `Write` kuralının reddettiği bir dosyaya, ayrıca izin verilen bir kabuk programı işletim sistemi yetkileriyle yazabilir. Komut desenleri ve salt okunur komut tespiti metin üzerinde çalışır. Her alt işlem için bir işletim sistemi erişim kuralı gerekiyorsa izolasyon da kullanılmalıdır.
+
+Docker kapalıyken izin verilen kabuk ve host'ta başlatılan yardımcı programlar mevcut kullanıcı hesabının yetkileriyle çalışır. Bu kapsam proje dışı dosyaları, kullanıcı verisini, ağı ve yerel brokeri içerebilir. MCP protokolü onay kararı taşımaz. Host yetkisiyle çalışan ayrı bir program broker ile doğrudan iletişim kurabilecek durumdaysa tarayıcıdaki köken denetimi tek başına yeterli değildir.
+
+`review_changes`, `review_and_fix` ve `reviewAfter` ayrı bir akış kullanır. İnceleme kontrolleri host kabuğunda çalışır. Docker worker ve Code Mode yardımcı kuralları bu komutlara uygulanmaz. Düzeltme aracı dosyaları host üzerinde değiştirir. [İnceleme sınırları](README-review.md#veri-ve-çalıştırma-sınırları)
 
 ## Docker sınırı
 
-CODE_MODE_ISOLATION=docker her işi --rm --init ile tek kullanımlık Linux
-konteynerinde çalıştırır. Proje /work altında yazılabilir mount'tur; diğer
-host dosyaları bağlanmaz. Host'un 127.0.0.1'de dinleyen brokeri guest
-loopback üzerinden erişilemez. İmaj bütün build girdilerinin SHA-256 hash'iyle
-seçilir; motor/build hatasında host yürütmesine düşülmez.
+Her yürütme için tek kullanımlık Linux konteyneri açılır. Proje `/work` altında yazılabilir bağlanır. Worker imajı build girdilerinin hash'iyle seçilir. Motor veya imaj hazırlanamazsa yürütme hata verir. Host'un loopback adresindeki broker konuk loopback adresinde bulunmaz.
 
-Politika, classifier ve hook denetimi host'ta kalır. Yapılandırılmış MCP
-sunucuları denetlenen stdio RPC köprüsünden çağrılır; ham istekler de bağımsız
-izin denetiminden geçer. İstek sayısı 64, argüman 256 KiB, yanıt 1 MiB ile
-sınırlıdır. İptal hook/MCP isteklerine iletilir ve konteyner kaldırılır.
+- Bağlanan projenin içindeki dosyalar konuk işlemlere açıktır. Güvenilen engine, çalışma verisi ve anahtar dizinlerini proje mount'undan ayrı tutmak sınırı korur.
+- Konteynerin dış ağı açıktır. Disk izolasyonu, ağ çıkış filtresi sağlamaz.
+- Politika, hook ve sınıflandırıcı denetimleri host'ta yapılır. Köprü, dış MCP çağrılarını denetler. Hook ve dış MCP programlarının kendi dosya ve ağ erişimleri host yetkileriyle sürer.
+- İptal yürütücüye, bağlı host çağrılarına ve konteynere iletilir. Kendini ayırmış süreçlerin her ortamda sonlanma garantisi yoktur.
 
-Docker'ın kaldırmadığı yetkiler:
+## Yerel onay brokeri
 
-- Proje mount'u okunabilir/yazılabilirdir. Sırlar veya güvenilen engine/scriptler
-  mount içindeyse erişilebilir olabilir. Çalışma alanını engine/veri/anahtar
-  dizinlerinden ayrı tutmak gerekir.
-- Konteynerin dış ağı açıktır; tam bir ağ egress filtresi uygulanmaz.
-- Dış MCP sunucuları ve hook'lar host yetkileriyle çalışır. Docker bunların
-  kendi dosya/ağ etkilerini yalıtmaz.
-- Kendini ayırmış alt süreçlerin her ortamda sonlanması garanti edilmez.
+Onay gerektiğinde broker host'ta `127.0.0.1` üzerinde rastgele bir portta başlar. Bekleyen karar iş, araç, girdi, son tarih ve tek kullanımlık nonce ile ilişkilidir. İnsan kararını brokerin sayfasında verir. Tekrarlanan karar reddedilir. Süre aşımı, broker bağlantısının kaybı ve iptal bekleyen kararı geçersiz kılar.
 
-## Onay brokeri
-
-Broker yalnızca host 127.0.0.1'de rastgele portta dinler. Bekleyen karar,
-iş kimliği, araç, dosya/komut, süre sınırı ve 256-bit tek kullanımlık nonce ile
-ilişkilidir. Token örnek başına rastgeledir. Nonce MCP yanıtlarında görünmez;
-hiçbir MCP aracı karar taşımaz. İnsan broker sayfasında yanıtlar. Tekrarlanan
-karar 409 alır; süre dolarsa ret uygulanır. Broker kaybında onay geçerli
-sayılmaz. Auto onayı geçersizleşen işin geri sayımı dolarsa yeni kod başlayana
-kadar sonraki onay gereken çağrılar reddedilir.
-
-approvals.jsonl SHA-256 zinciri request/decision/timeout/cancelled/lost ve
-rejected/duplicate olaylarını kaydeder. Zincir, yetkili host programının
-bütün dosyayı yeniden yazmasına karşı harici bir güven kökü değildir.
+`approvals.jsonl`, istek ve karar olaylarında SHA-256 zinciri tutar. Bu kayıt, bütün dosyayı yeniden yazabilecek yetkide bir host sürecine karşı harici bir doğrulama kaynağı sağlamaz. Onayların bekleme süresi ve yeniden kurulma davranışı [MCP kılavuzunda](README-code-mode.md#sınıflandırıcı-ve-onaylar) açıklanır.
 
 ## Çıktı ve kayıtlar
 
-Arka plan UserPromptSubmit hook'u varsa olay, sonuç, günlük ve yeni state
-hook geçene kadar tutulur. Ret halinde bunlar paylaşılmaz; engelleme nedeni
-döner. Yapılmış dosya değişiklikleri geri alınmaz. Ön plan poll_event değildir.
-
-İş, state, terminal konuşması ve onay kayıtları düz JSON/JSONL dosyalarıdır;
-hassas içerik barındırabilir, şifrelenmez veya otomatik silinmez. Model uç
-noktasına konuşma/araç sonuçları, classifier'a kod gönderilir. API anahtarları
-terminal konuşma kaydına eklenmez.
+- Arka plan çıktı hook'u etkinse sonuç, günlük, olay ve yeni `state` yayımdan önce bekletilir. Hook engellerse daha önce uygulanmış dosya etkileri kalır.
+- Yardımcı işlem kayıtları komutları, dosya yollarını ve düzenleme önizlemelerini içerebilir. Kabuk programının kendi içindeki dosya veya ağ işlemleri tek tek kaydedilmez.
+- İş, yürütme durumu, konuşma ve onay kayıtları kullanıcı dizininde düz JSON veya JSONL olarak saklanır. Bu kayıtlar hassas veri içerebilir. Şifreleme veya otomatik saklama süresi uygulanmaz. Tamamlanan MCP işleri ve yürütme durumları ilgili silme araçlarından yönetilir. Terminal konuşması ayrı bir dosyadır.
+- Model uç noktası kullanıcı konuşmasını ve aktarılan araç sonuçlarını, `auto` sınıflandırıcısı ise kod bloğunu ve sınırlı bağlamı alır. İnceleme uç noktası Git diff'ini, proje inceleme yönergelerini ve istenen kaynak parçalarını alabilir. Anahtarları güvenilen ortam değişkenlerinde tutun.
 
 ## Doğrulama
 
-npm test; QuickJS escape denemelerini, CPU sınırını, paralelliği, MCP akışını,
-hook'ları, auto onayını/geçersizleşmesini, brokeri, terminal model döngüsünü,
-Ctrl+O stream/key olaylarını, installer ve imaj hash'ini doğrular. Docker varsa
-gerçek konteyner sınırı da çalışır. test:isolation:required motor/build yokluğunu
-hata sayar; CI Linux işi bunu kullanır. test:auto:live gerçek modeli ayrıca
-doğrular; iki örneğin geçmesi classifier'ın genel doğruluğunu kanıtlamaz.
-
-Önceki Desktop canlı raporu v0.11 dönemindendir. Yeni runtime/terminal testleri
-Desktop'ın yeni sürümdeki UI doğrulamasının yerine geçmez.
+`npm test`, QuickJS sınırları, zaman aşımı, eşzamanlılık, MCP araç akışı, politika, hook'lar ve brokeri denetler. `npm run test:isolation:required` gerçek Linux Docker motoruyla sınırı zorunlu olarak sınar. Canlı sınıflandırıcı değerlendirmesi, kullanılan model ve senaryolar için kanıt sağlar. [Test kapsamı ve canlı kayıtlar](CODE-MODE-COMPATIBILITY.md#doğrulama-kayıtları)

@@ -1,475 +1,172 @@
-# 3P Code Mode v0.12
+# Code Mode MCP sunucusu
 
-MCP destekleyen yapay zekâ uygulamaları için kod yürütme sunucusu ve [terminal oturumu](README-terminal.md). Model, tek çağrıda JavaScript yazar; kod asenkron işlemleri sırayla veya `Promise.all` ile paralel çalıştırabilir, sonuçları süzebilir, dosyaları değiştirebilir ve komut/test çalıştırabilir. Anthropic Code Mode'un ayrı bir uygulamasıdır; native Claude Code istemcisi değildir.
+`3p-code-mode`, istemcinin ürettiği JavaScript'i QuickJS içinde çalıştıran bir stdio MCP sunucusudur. JavaScript, proje ve işletim sistemiyle denetimli yardımcılar üzerinden etkileşir. İstemci modeli seçer ve `code_execute` gibi araçları çağırır. Etkileşimli REPL, konuşma kaydı ve sağlayıcı seçimi için [bağımsız terminali](README-terminal.md) kullanın.
 
-**Güncel varsayılan: `autoApprove`.** MCP, terminal ve kurulum scripti insan
-onayı istemez, sınıflandırıcı çağırmaz ve onay brokeri başlatmaz. `ask`
-kuralları ve hook'un `ask` kararı otomatik geçilir; açık `deny` ve engelleyen
-hook'lar uygulanır. Diğer izin modları yalnızca açıkça seçilirse kullanılır;
-aşağıdaki classifier/broker açıklamaları bu eski, isteğe bağlı modlar içindir.
-Önceden kurulmuş sunucu için scripti yeniden çalıştırıp istemciyi yeniden
-başlatın; mevcut açıkça yapılandırılmış mod kendiliğinden değiştirilmez.
+## Claude Desktop 3P kurulumu
 
-## Önemli yetki sınırı
+Windows'ta Node.js 24+ ve mevcut bir Desktop yapılandırması gerekir. Docker kullanacaksanız Linux konteynerleri çalıştıran motoru başlatın. Motorun depo kökünden çalıştırın.
 
-Modelin JavaScript'i QuickJS WebAssembly motorunda çalışır: `process`, `require`, Node.js import'ları ve doğrudan `fetch` yoktur. Dosya, kabuk ve MCP erişimi denetlenen yardımcılarla yapılır. İzin verilen kabuk programları Docker olmadan host hesabının yetkilerine sahiptir; Docker ek OS sınırı sağlar. `cwd` başlangıç dizinidir. Ayrıntılar [SECURITY.md](SECURITY.md) dosyasındadır.
+~~~powershell
+$desktopConfig = Join-Path $env:LOCALAPPDATA 'Claude-3p\claude_desktop_config.json'
+$project = 'C:\Projects\uygulama'
+.\install-code-mode.ps1 -ConfigPath $desktopConfig -Isolation docker
+npm.cmd run code -- --config $desktopConfig --enable --cwd $project
+~~~
 
-## Desktop yapılandırması
+1. Kurulum scripti Desktop dosyasını yedekler, `3p-code-mode` kaydını yazar ve kullanacağı Node ile sunucu dosyasının mutlak yollarını kaydeder. Docker seçildiyse imajı da hazırlar. Motorun depo yolu değişirse kurulumu yeni konumda tekrarlayın.
+2. `--enable` proje yolunu güvenilen kullanıcı dizinindeki `settings.json` dosyasına kaydeder. Desktop ve terminal aynı `CODE_MODE_DATA_DIR` değerini kullanmalıdır. `--config` seçeneği kayıtlı MCP ortamını yükler. Windows varsayılanı `%LOCALAPPDATA%\3p-code-engine` olur.
+3. MCP kaydı yeni eklendiyse veya başlatma ayarları değiştiyse Desktop'ı tamamen kapatıp açın. Kayıtlı sunucu sonraki açılışlarda başlatılır. Yürütme izni proje için diskten okunur, bu nedenle etkinleştirme komutu her açılışta tekrarlanmaz.
 
-Bu kurulum scripti Windows içindir; her kullanıcı kendi hesabında çalıştırır. Node.js 24 veya üzeri ve npm PATH üzerinde bulunmalıdır. Gerekli npm paketleri eksikse script `npm ci` çalıştırır (internet erişimi gerekir). Claude Desktop veya 3P yapılandırması önceden mevcut olmalıdır. Script kullanıcı adı, sabit proje yolu veya sabit Node kurulum dizini kullanmaz.
+Script `-ConfigPath` verilmediğinde `%LOCALAPPDATA%\Claude-3p\claude_desktop_config.json` ve `%APPDATA%\Claude\claude_desktop_config.json` dosyalarını arar. İkisi de varsa açık bir yol ister. Özel Node kurulumu için `-NodePath` kullanılabilir. `-Isolation` varsayılanı `off`, `-PermissionMode` varsayılanı `autoApprove` olur. Mevcut bir kurulumu güncellerken istediğiniz modu ve izolasyonu açıkça geçin. `-ModelEndpoint` ve `-ModelName` inceleme motorunun ortamına yazılır. Desktop sohbetinin model rotası, Desktop'ın kendi sağlayıcı profilinde ayarlanır.
 
-PowerShell'i projenin çıkarıldığı klasörde aç ve çalıştır:
+### İlk Desktop çağrısı
 
-```powershell
-.\install-code-mode.ps1
-```
+Etkinleştirdiğiniz mutlak yolu kullanarak Desktop sohbetinden basit bir çağrı isteyin.
 
-Script mevcut `%LOCALAPPDATA%\Claude-3p\claude_desktop_config.json` ve `%APPDATA%\Claude\claude_desktop_config.json` dosyalarını arar. İkisi de mevcutsa yanlış profili seçmemek için `-ConfigPath` ister. Özel Node yolu için `-NodePath` kullanılabilir. Bir model sunucusu ve modeli belirlemek için isteğe bağlı:
+> `3p-code-mode` sunucusundaki `code_execute` aracını çağır. `cwd` olarak `C:\Projects\uygulama` kullan. `return { ok: true }` JavaScript'ini çalıştır ve araç sonucunu göster.
 
-```powershell
-.\install-code-mode.ps1 -ConfigPath "$env:LOCALAPPDATA\Claude-3p\claude_desktop_config.json" `
-  -ModelEndpoint 'http://127.0.0.1:9931/v1' -ModelName 'model-adi'
-```
+Araç bulunamıyorsa Desktop'ın yerel MCP konektörlerinde `3p-code-mode` kaydını kontrol edin. `Code Mode is not enabled` hatasında belirtilen `cwd` ile kullanıcı ayarındaki proje yolunu ve veri dizinini karşılaştırın. Alt dizin ayrı bir `cwd` olarak kullanılacaksa o yol da etkinleştirilir. Bozuk kullanıcı ayarı açık bir hata üretir. Kapatma işlemi [terminal kılavuzunda](README-terminal.md#projeyi-etkinleştirme) anlatılır.
 
-Mevcut yapılandırma yedeklenir; eski `3p-code-engine-reader` kaydı kaldırılır. Diğer MCP kayıtları ve daha önce tanımlanmış `3p-code-mode` ortam değişkenleri korunur. Kaydedilen Node ve proje yolları kurulum anındaki mutlak yollardır; proje taşınırsa scripti yeni yerinden yeniden çalıştırın. Desktop'ı yeniden başlatıp araç listesinde `code_execute` bulunduğunu doğrulayın. Bu işlemler her Desktop/3P sürümü veya her modelle doğrulanmış değildir.
+### Basalt ile yerel Qwen
 
-## Etkinleştirme (projeye özel, güvenilen kullanıcı ayarı)
+Doğrulanan örnekte Desktop 3P'nin gateway profili `http://127.0.0.1:9931` adresine bağlandı. Basalt yapılandırmasında `Qwen3.8-27B-QUASAR-NVFP4.basalt` dosyasının API takma adı `anthropic/claude-opus-5-5` olarak tanımlıydı. Desktop profili, Basalt'ın API'de sunduğu kimliği kullanır. Fiziksel ağırlık dosyasını Basalt yapılandırmasındaki `models[].model` alanından doğrulayın. [Basalt model yönlendirmesi](https://github.com/jesdga95/basalt/blob/main/docs/configuration/models.md)
 
-Code Mode'un bir projede **etkin** olması, `permissionMode` seçiminden
-ayırt edilen ayrı bir ayardır: `auto` (veya başka bir mod) seçmek özelliği
-tek başına açmaz. Her proje, kullanıcı düzeyinde veri dizinindeki
-`settings.json` dosyasında açıkça etkinleştirilir; proje dizinindeki hiçbir
-dosya Code Mode'u kendiliğinden açamaz. Dosya yoksa özellik her yerde
-kapalıdır (fail-closed başlangıç durumu). Etkinleştiren açık eylem
-terminal komutudur (`node code-mode-cli.mjs --enable --cwd <proje>`, kapatmak
-için `--disable`) ya da o güvenilen dosyanın elle düzenlenmesidir; kurulum
-scripti etkinleştirme yapmaz. Bozuk bir dosya (geçersiz JSON, tanınmayan
-sürüm, hatalı `enabled` alanı) yürütmeyi ve resume'u açık hatayla reddeder:
-dosyayı düzeltin veya silin, sessiz sıfırlama yapılmaz.
+~~~powershell
+Invoke-RestMethod 'http://127.0.0.1:9931/health' | Select-Object model, loaded
+(Invoke-RestMethod 'http://127.0.0.1:9931/v1/models').data | Select-Object id
+~~~
 
-Bu yüzeydeki etkisi: `code_execute`/`code_start` ve `code_session_resume`,
-etkinleştirilmemiş bir projede `Code Mode is not enabled for <dizin>`
-gerekçesiyle reddedilir; Anthropic hesap veya model uygunluğu kontrolleri
-taklit edilmez.
+Desktop, MCP aracını sohbetin parçası olarak seçer. `3p-code-mode` kaydı aracın kullanılabilirliğini sağlar. Kayıtlı yapılandırmayla yeni bir MCP sürecinin açıldığı ve çağrıyı tamamladığı doğrulandı. Modelin Desktop arayüzünde aracı seçmesi için yukarıdaki ilk çağrıyı kullanın. [Doğrulama kapsamı](CODE-MODE-COMPATIBILITY.md#doğrulama-kayıtları)
 
-## API
+## Araç API'si
 
-### Araç çağrısı kuralları ve PreToolUse
-
-Varsayılan politika kurulum dizinindeki `code-mode-policy.json` dosyasıdır
-(başlangıçta `{}`). Başka bir güvenilen dosya için MCP sunucusunun ortamında
-`CODE_MODE_POLICY_PATH` değerini mutlak yola ayarlayın. Docker modunda sunucu, diğer modda worker yapılandırmayı
-her yürütmenin başında okur; politika değişikliği için Desktop'ı yeniden
-başlatmak gerekmez. Eksik veya geçersiz politika yürütmeyi engeller. Örnek:
-
-```json
-{
-  "deny": ["Write"],
-  "ask": ["Edit"],
-  "preToolUse": [
-    { "tool": "Bash", "command": "C:/Program Files/nodejs/node.exe", "args": ["C:/hooks/check-command.mjs"] }
-  ]
-}
-```
-
-Kurallar araç adına, `mcp__<sunucu>__<araç>` adının (yalnızca araç
-bölümünde) `*` desenine veya komut/dosya kapsamına eşleşir. Kullanılabilir
-adlar `REPL`, `Read`, `Write`, `Edit`, `Bash`, `McpListTools` ve
-`mcp__<sunucu>__<araç>` biçiminde MCP araç adlarıdır.
-
-Komut kapsamı (`Bash(...)`) komut metnine eşleşir; `*` her metni temsil
-eder, `:*` eki ` *` ile eşdeğerdir, sondaki tek ` *` çıplak komutu da
-kapsar (`Bash(npm run *)` → `npm run`), başka yerde `:` yazı olarak kalır.
-Ayrıştırıcı tırnakları gözetir; ayıracılar `;` `&` `&&` `|` `|&` ve satır
-sonudur:
-
-- `deny`/`ask`: birleşik komutta **herhangi** bir alt komut eşleşirse
-  uygulanır.
-- `allow`: **tüm** komutu kapsaması gerekir — çözümlenebilen, yer
-  değiştirme (substitution), yönlendirme veya parantez içermeyen ve her
-  bölümü ya desenle eşleşen ya da aşağıdaki salt-okunur kümede olan
-  komutlar. Bileşik, yönlendirilmiş veya çözümlenemeyen komut `allow`
-  ile asla onaylanmaz (kötüye gidiş: istenir).
-
-Salt-okunur komutlar hiçbir modda onay istemez: `ls`, `cat`, `echo`, `pwd`,
-`head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, çalışma
-dizininde kalan `cd` ve salt-okunur `git` biçimleri; PowerShell
-komutları/alias'ları (`Get-ChildItem`, `gci`, `Get-Content`, `Test-Path`,
-`Select-Object` …) aynı gramerle değerlendirilir. Belgelenmiş istisnalar
-onay ister: yazma/yürütme bayraklı komutlarda (`find`, `sort`, `sed`,
-`git`) tırnaksız glob; çalışma dışına `cd`; başka dizine `cd` sonrası
-`git`; `-a` dışı `which` bayrağı; 10.000 karakter üstü komut; çözümlenemeyen
-sözdizimi. Salt-okunur kümesi ve komut eşleştirme metni bir kabuk
-ağacını değil metni denetler; güvenilir bir sınır değildir, Docker sınırı
-bunun için vardır.
-
-Dosya kapsamları gitignore biçimlidir: `//yol` mutlak (Windows `C:\…` →
-`/c/…`), `~/yol` ev dizini, `/yol` çalışma dizinine bağlı, çıplak `ad` derinlik
-gözetmeden; `*` tek bölüm, `**` bölüm sınırı aşar. Tek dizin
-bölümünde relative desenler (`src/**`) `allow` için yalnızca çalışma
-dizini altında, `deny`/`ask` için çalışma dizini altında herhangi bir
-derinlikte eşleşir; `/src/**` tüm listelerde bağlıdır. Native şemada
-`Edit(path)` kuralları **Write aracını da kapsar**; `Write(path)` ise bu
-projenin açık belgeli genişlemesidir ve yalnızca Write aracına uygulanır
-(native şemada yol parametreli Write kuralları kabul edilip hiç
-eşleşmez). Kuruluma kabul edilen `allow` kuralları yalnızca araç adı veya
-`mcp__<sunucu>__` öneki altındaki `*` kullanabilir; `allow: ["*"]`
-yazılmaz. Negasyon (`!`) desenleri yeniden yorumlanmadan kurulumda
-reddedilir.
-
-Öncelik her çağrıda: `deny` → hook'lar → hook `updatedInput` döndürürse
-`deny` ve `plan` kısıtının değiştirilmiş girdiye karşı yeniden
-denetlenmesi → `ask` (allow geçersiz kılamaz) → `allow` (modun onayı
-atlar) → modun kendi onayı. `deny` tüm modlarda, `bypassPermissions` dahil,
-özgün ve değiştirilmiş girdinin her ikisine karşı engeller. `ask` ve mod
-onayı yerel insan onay brokerinin web arayüzünde ister: iş, insan karar
-verene kadar bekler. Ön plan ve arka plan çağrıları aynı broker üzerinden onaylanır;
-model, `code_status` ile bekleyen onayı yalnızca **görebilir** (işlem,
-dosya, süre ve insanın açacağı bağlantı), **karar veremez**: hiçbir MCP aracı
-onay taşıyamaz, karar için brokerin kendi sunduğu sayfanın kökeni
-doğrulanır. Yanıt olumsuzsa veya iki dakikalık süre dolarsa çağrı engellenir.
-
-Hook bir araç adına veya `*` ile tüm denetlenen araçlara bağlanabilir.
-Standart girdiden `hook_event_name`, `tool_name`, `tool_input`, `cwd`
-ve varsa `session_id` alanlarını içeren JSON alır. Hook'lar tanımlandıkları
-sırada çalışır. `type` varsayılan olarak `command` değerindedir. Komut yolu
-mutlak olmalıdır; `args` ayrı argümanlardır, kabuk komut metni değildir.
-
-- `timeoutMs`: varsayılan 5000, 100–600000 arası. Hook yanıtı en fazla 64 KiB.
-- Çıkış kodu 0: boş çıktı veya JSON karar okunur. Kod 2: her zaman engelle.
-- Diğer normal çıkış kodları: devam et; `onFailure: "block"` ile engelle.
-- Başlatma hatası, zaman aşımı, 126/127/>128 çıkışı, geçersiz JSON ve HTTP/MCP
-  hatası: varsayılan engelle; `onFailure: "continue"` ile devam et.
-- `{"decision":"block","reason":"..."}` her zaman engeller.
-  `hookSpecificOutput.permissionDecision` için `allow`, `deny` ve `ask`
-  desteklenir. `allow` açık `deny` kurallarını geçersiz kılmaz.
-- `hookSpecificOutput.updatedInput` yalnızca `PreToolUse`'ta desteklenir ve
-  girdi nesnesinin **tamamını** değiştirir: çalışan girdi, kuralların
-  denetlediği girdi, onay önizlemesinde görünen girdi ve olay kaydına
-  düşen girdi aynı nesnedir. Zincirde sonraki hook, öncekinin
-  `updatedInput` çıktısını görür. `REPL` kodu hook ile değiştirilemez
-  (açık hata).
-- `hookSpecificOutput.additionalContext` (dize veya dize dizisi; toplam en
-  fazla 64 KiB) sonuçla modele iletilir; `permissionDecisionReason` onay
-  gerekçesi olarak gösterilir.
-- Hook `allow`'ı yalnızca modun onayını atlar: `deny`/`ask` kuralları,
-  `plan` kısıtı ve auto sınıflandırmayı geçersiz kılamaz. `auto` modunda
-  hook tarafından değiştirilen girdi, sınıflandırmanın incelediği girdi
-  olmadığı için insan onayı ister.
-
-### Çıktı denetimi ve diğer hook türleri
-
-`userPromptSubmit`, arka plan kodunun çıktısını modelden önce denetler.
-Hook girdisi `hook_event_name: "UserPromptSubmit"`, `source: "poll_event"`,
-`cwd`, `session_id` ve JSON metni olan `prompt` alanlarını içerir. `prompt`,
-sonuç, günlükler, yardımcı işlemler, state ve bekletilen ilerleme olaylarını
-kapsar. Bu hook'lar etkinse çıktı tamamlanana kadar bekletilir; onaydan önce
-`code_status` üzerinden günlük veya komut çıktısı sızdırılmaz. Engellemede
-`outputBlocked: true` ve hook nedeni döner; çıktı/state kaydedilmez. Dosyalara
-uygulanmış değişiklikler geri alınmaz. Ön plandaki `code_execute` bu çıktı
-olayını üretmez.
-
-```json
-{
-  "preToolUse": [
-    { "tool": "Bash", "type": "http", "url": "http://127.0.0.1:8090/pre-tool", "timeoutMs": 5000, "onFailure": "block" }
-  ],
-  "userPromptSubmit": [
-    { "type": "command", "command": "C:/Program Files/nodejs/node.exe", "args": ["C:/hooks/check-output.mjs"] },
-    { "type": "mcp_tool", "server": "policy", "mcpTool": "check_output" }
-  ]
-}
-```
-
-HTTP hook girdiyi POST JSON olarak alır; isteğe bağlı `headers` nesnesi
-kullanılabilir. Başarılı yanıt boş olabilir veya JSON karar içerebilir;
-yönlendirmeler izlenmez. MCP hook, yapılandırılmış stdio sunucusunda `mcpTool`
-aracını çağırır. İsteğe bağlı `arguments` nesnesine olay alanları eklenir;
-olay alanları geçersiz kılınamaz. Araç `structuredContent` veya JSON metni
-döndürür. Bu hook çağrıları güvenilen politika yapılandırmasıdır; kendileri
-yeniden `PreToolUse` tetikleyip sonsuz döngüye girmez.
-
-Native Claude Code hook yapılandırması için uyumluluk adaptörü: politika
-alanı `hooks: { "PreToolUse": [...], "UserPromptSubmit": [...] }` olarak da
-verilebilir (düz `preToolUse`/`userPromptSubmit` alanlarıyla aynı anda
-kullanılamaz); gruplar `matcher` + `hooks` dizisi taşır. `matcher` yalnızca
-tam araç adlarını (`|` ile ayrılmış) veya `*` kabul eder; regex değildir.
-Native `timeout` **saniye** birimindedir ve `timeoutMs` (milisaniye) ile
-aynı anda verilemez. Native MCP `tool`/`input` alanları `mcpTool`/
-`arguments`'a çevrilir. Desteklenmeyen alanlar ve türler (`if`, `async`,
-`shell`, `statusMessage`, `once`, `allowedEnvVars`; `prompt`/`agent` türleri)
-ile desteklenmeyen çıktı alanları (`systemMessage`, `terminalSequence`) ve
-`defer` kararı sessizce yok sayılmaz — açık hatayla reddedilir.
-
-### İzin modları
-
-İzin modu, Code Mode'un o projede etkin olup olmadığını belirlemez;
-etkinleştirme ayrı bir güvenilen kullanıcı ayarıdır (yukarıdaki bölüm).
-
-`CODE_MODE_PERMISSION_MODE` sunucu ortamından ayarlanır. Çağrı yapan model
-bu ayarı araç parametresiyle değiştiremez; bu yüzeyde mod çalışma anında
-değişmez ve hiçbir araç mod parametresi kabul etmez. Burada başlatılan her
-yürütme `source: 'mcp'` kaydeder: Desktop gerçek kullanıcı olayını bildiremez
-(kullanıcının gerçek eylemini modelin araç çağrısından ayırt edemez), bu yüzden
-süresi dolan onaylar bu yüzeyde yeniden kurulmaz ve iş bitene kadar ret olarak
-kalır. Kurulum scripti, doğrudan başlatılan MCP sunucusu ve yeni terminal
-oturumları varsayılan olarak `autoApprove` seçer. Bu mod endpoint/model veya
-classifier gerektirmez. Terminalin görevi üreten modeli ayrıca yapılandırılır.
-`auto` açıkça seçilirse classifier endpoint/model ayarları zorunludur.
-
-| Mod | Yardımcı çağrılara etkisi |
+| Araç | Girdi ve sonuç |
 | --- | --- |
-| `autoApprove` (varsayılan) | Onay istemeden yürütür; classifier/broker çalışmaz. `ask` otomatik geçilir; açık `deny`, engelleyen hook ve çıktı hook'ları korunur. |
-| `rules` | Yapılandırılmış `deny`, `ask` ve hook'lar uygulanır; `allow` kuralları sessizce eşleşir. |
-| `default` | Yazma, düzenleme, kabuk ve dış MCP işlemleri onay ister; salt-okunur okumalar ve belgelenen salt-okunur kabut komutları onay istemez. |
-| `acceptEdits` | Dosya yazma ve düzenleme için modun ek onayı atlanır. Kabuk ve dış MCP işlemleri onay ister. |
-| `plan` | Yalnızca `Read`, `REPL` ve salt-okunur kabut komutları çalışabilir; kalan her şey reddedilir (hook ve `allow` kısıtı kaldıramaz). |
-| `auto` | JavaScript'in tamamı çalıştırılmadan önce bir kez sınıflandırılır. Yardımcı araç kuralları ve hook'lar uygulanır; `allow` kuralıyla çözülen yardımcılar sınıflandırmayı beklemez. |
-| `bypassPermissions` | Mod ek onay istemez. Açık `deny`, `ask` ve hook'lar uygulanır. |
+| `code_execute` | `code`, yeni oturum için mutlak `cwd`, isteğe bağlı `sessionId`, `timeoutMs` ve `reviewAfter`. Ön planda tamamlanmayı bekler ve sonucu döndürür. |
+| `code_start` | `code`, yeni oturum için mutlak `cwd`, isteğe bağlı `sessionId` ve `timeoutMs`. Arka plan iş kimliğini döndürür. |
+| `code_status` | `jobId` ve isteğe bağlı `afterSequence`. İş durumunu, sonucu, yeni olayları ve varsa bekleyen onayları döndürür. İstemci bu aracı sorgular. |
+| `code_cancel` | `jobId`. Çalışan işi durdurmayı dener. |
+| `code_job_delete` | `jobId`. Tamamlanmış işin kayıt, çıktı ve olaylarını siler. |
+| `code_session_resume` | `sessionId`. Proje yolunu ve son işlerin kimliklerini içeren oturum bilgilerini döndürür. |
+| `code_session_delete` | `sessionId`. Saklanan yürütme durumunu siler. |
+| `review_changes`, `review_and_fix` | Git değişikliği inceleme ve düzeltme araçları. Ayrıntılar [inceleme kılavuzunda](README-review.md#mcp) yer alır. |
 
-`auto` için `CODE_MODE_CLASSIFIER_ENDPOINT` ve `CODE_MODE_CLASSIFIER_MODEL`
-zorunludur. İsteğe bağlı `CODE_MODE_CLASSIFIER_API_KEY` ve
-`CODE_MODE_CLASSIFIER_TIMEOUT_MS` (varsayılan 30000) kullanılabilir.
-Sunucu JavaScript'i ve başlangıç dizinini yapılandırılan OpenAI uyumlu
-uç noktaya gönderir. Sınıflandırma, kod bloğu başına tam olarak bir kez ve
-TAM BLOKLA yapılır (araç başına parçalara bölünmez). Sınıflandırmaya giren
-yegâne girdiler çalışma dizini, kod ve — yalnızca terminalde — güvenilen
-kullanıcı niyeti (`userIntent`): insanın o turda yazdığı gerçek talep, ayrı bir
-veri alanıyla taşınır. `poll_event` turları (sentetik arka plan tamamlanma
-mesajları) ve MCP yüzeyi (gerçek kullanıcı olayı ayırt edilemeyen yüzey) niyet
-taşımaz; kod yorumları ve araç çıktıları bu alanı dolduramaz. Niyet asla
-kimlik bilgisi erişimi, dışa aktarma, yıkıcı/proje dışı işlem veya onay
-atlama yetkilendiremez. Yalnızca `{"decision":"allow"}` sonucu yürütmeye izin
-verir. Hata, bozuk ya da belirsiz sonuç çağrıyı engeller (fail-closed).
+`code` en fazla 65.536 karakter olabilir. `timeoutMs` alt sınırı 1.000 ms olur. Ön plan için varsayılan ve üst sınır 600.000 ms, arka plan için 7.200.000 ms'dir. Bütçe onay bekleme süresini de kapsar. Her yardımcı yürütmesi ayrıca kendi süre sınırına tabi olabilir.
 
-Gerçek model doğrulaması ve değerlendirme paketi:
+`code_execute` yanıtındaki ilk MCP metin bloğu yürütme kaydını JSON olarak içerir. JavaScript'in döndürdüğü değer bu kaydın `result` alanında gösterim metni olarak yer alır. Kaydın `ok` alanı yürütme durumunu belirtir. `run` başarısız bir süreç çıkışı döndürdüyse JavaScript bu hatayı ayrıca ele alır.
 
-```powershell
-npm run test:classifier:eval -- --endpoint http://127.0.0.1:9931/v1 --model model-adi
-npm run test:classifier:eval -- --offline
-.\install-code-mode.ps1 -Isolation docker -PermissionMode auto `
-  -ClassifierEndpoint http://127.0.0.1:9931/v1 -ClassifierModel model-adi
-```
+### JavaScript yardımcıları
 
-Paket (`test-classifier-eval.mjs`) iki katmanda değerlendirir. Offline
-katman (`npm test` içinde, `--offline`; gerçek model gerektirmez) mock
-classifier'la tesisatı deterministik doğrular: bozuk yanıtlarda fail-closed
-ret (JSON dışı metin, boş içerik, HTTP 500, bağlantı kopması, yanıtsız
-endpointte süre sınırı), kod bloğu başına inceleme değişmezliği (tek istekte
-tam blok; ret gelince karışık blokta zararsız yarı bile çalışmaz),
-çalıştırılmayan kodun etkisizliği (dosya etkisi yok, kayıtlı işlemin yok) ve
-niyetin yalnızca gerçek kullanıcı turunda taşınması. Canlı katman (ör. Qwen
-OpenAI-uyumlu endpoint) senaryo ailelerinde modelin yargı kalitesini ölçer:
-normal proje işleri, hesaplanan yollar, dolaylı shell işlemleri, onay atlama
-girişimleri, kod yorumuyla yetki iddiası ve niyet etkileşimi; yalnızca
-sentetik dosya ve sırlar kullanılır. `test:auto:live` eski ad olarak kalır.
+| Yardımcı | Davranış |
+| --- | --- |
+| `await read(file)` | UTF-8 metin okur. Okuma sınırı JavaScript dizesinde 1.048.576 birimdir. |
+| `await write(file, text)` | UTF-8 yazar veya üzerine yazar. İzin kontrolünden sonra eksik üst dizinleri oluşturur. |
+| `await edit(file, oldText, newText)` | Boş olmayan `oldText` tam bir kez eşleştiğinde metni değiştirir. |
+| `await run(command, {cwd, timeoutMs})` | Kabuk komutunu çalıştırır. `ok`, `exitCode`, `stdout`, `stderr`, `timedOut` ve `truncated` döndürür. |
+| ``await $`komut`.text()`` ve ``await $`komut`.nothrow()`` | Etiketli kabuk şablonu. `.text()` başarılı çıktıyı verir ve komut başarısızsa hata fırlatır. `.nothrow()` sonuç nesnesini verir. Şablon değişkenleri birer kabuk argümanı olarak tırnaklanır. |
+| `await listMcpServers()` ve `await listMcpTools(server)` | Yapılandırılmış stdio MCP sunucularını ve araçlarını listeler. |
+| `await callMcp(server, tool, args)` | Yapılandırılmış stdio MCP aracını çağırır. |
+| `log(...values)` | Sonuca sınırlı bir günlük ekler. |
 
-`live-verification/classifier-eval-report.json` yanlış izin / yanlış ret
-sayılarını, reddedilen kodun etkisizlik kanıtını, model kimliğini (istenen
-model ile isteklerde gerçekten giden model alanı) ve kaynak hash'lerini
-(sınıflandırıcı, policy, runtime, paket) kaydeder. Yanlış izin veya bozuk
-yanıt canlı katmanı başarısız sayar; yanlış retler sayı olarak raporlanır.
-Bu senaryo aileleri bir model değerlendirmesidir, genel güvenlik iddiası
-değildir: sınıflandırıcıya yardımcı API'ler ve normal proje işlerinin
-kapsamı sunucu tarafından açıklanır; kod içindeki yorumlar ek yetki veremez.
+`tools.Read`, `tools.Write`, `tools.Edit` ve `tools.Bash` aynı yardımcıların diğer adlarıdır. Sonuç açık bir `return` ile veya son üst düzey ifadeyle verilebilir. Aynı dosyaya bağlı düzenlemeleri sıraya koyun. Bağımsız okumalar `Promise.all` ile paralel çalışabilir.
 
-Aynı sunucuda yeni bir auto kod sınıflandırması başladığında, önceki çalışan
-auto işlerinin sınıflandırıcı onayı geçersizleşir. Sonraki değişiklik yapan
-yardımcı çağrılar tek seferlik insan onayı ister; salt okuma devam eder.
-Arka plan işi onay beklerken `code_status` sorgulanmalıdır; yanıt bekleyen
-onaylar `pendingApprovals` alanında işlem, dosya, süre ve insanın açacağı
-bağlantıyla görünür. `code_status` salt okunur bir araçtır: onayı yalnızca
-gözlemler, karar veremez. Yanıt için iki dakika vardır; süre dolarsa sonraki
-onay isteyen çağrılar da reddedilir. Yeni `code_execute`/`code_start` isteği
-bu süre aşımı kilidini kaldırır. `CODE_MODE_APPROVAL_TIMEOUT_MS` güvenilen
-sunucu ortamından 100–120000 ms arasında ayarlanabilir.
+~~~javascript
+const file = 'src/retry.js';
+const [source, testSource] = await Promise.all([
+  read(file),
+  read('test/retry.test.js'),
+]);
+if (!source.includes('maxAttempts = 3') || !testSource.includes('retry')) {
+  throw new Error('Beklenen kaynak veya test bulunamadı');
+}
 
-### İsteğe bağlı eski modlarda insan onayı (broker)
+await edit(file, 'maxAttempts = 3', 'maxAttempts = 5');
+const test = await run('node --test test/retry.test.js', { timeoutMs: 90000 });
+return {
+  file,
+  ok: test.ok,
+  exitCode: test.exitCode,
+  output: (test.ok ? test.stdout : test.stderr || test.stdout).slice(-2000),
+};
+~~~
 
-Onaylar, MCP istemcisinden bağımsız çalışan yerel bir onay brokeri
-(`approval-broker.mjs`) ile verilir. İlk onay gerekince broker, veri dizininde
-`node approval-broker.mjs --data-dir <veri dizini>` olarak başlatılır;
-yalnızca 127.0.0.1'de rastgele bir portta dinler ve kendi 128-bit token'ını
-kullanır. İnsan, `code_status` içindeki bağlantıyı tarayıcıda açar; sayfa
-bekleyen işlemleri, dosya/komut önizlemesini ve geri sayımı gösterir,
-kabul/red kararı yalnızca o sayfadan (broker kökeni doğrulanır) alınır.
+`run`, Windows host'ta PowerShell ve Linux host veya Docker'da `/bin/sh` kullanır. Başarısız komut çıkışını kod `ok` veya `exitCode` üzerinden işler. Ele alınmamış yardımcı reddi, çalışma sırasında fırlayan zamanlayıcı hatası, JSON'a çevrilemeyen sonuç, bellek veya süre sınırı yürütme hatasına dönüşür. İş kayıtları yardımcı işlemlerini ve düzenleme önizlemelerini içerebilir. Ayrıntılar [güvenlik modelinde](SECURITY.md#çıktı-ve-kayıtlar) yer alır.
 
-- Her onay `jobId`, işlem adı, dosya yolu/komut, mutlak süre sınırı ve 256-bit
-  tek kullanımlık nonce ile ilişkilidir; ikinci karar `409` ile reddedilir.
-- Kararlar hash zincirli `approvals.jsonl` denetim dosyasına yazılır
-  (`request`, `decision`, `timeout`, `cancelled`, `lost`, `duplicate-decision`,
-  `rejected-decision`).
-- Bekleyen onaylar yalnızca broker belleğindedir: broker durursa `lost`
-  olarak denetirlenir ve çalışan iş karar kaybı ile biter.
-- Sunucu, istemcinin bildirdiği yetenekleri `client-capabilities.jsonl`
-  dosyasına ve izolasyon durumunu `isolation.json` dosyasına yazar.
-- QuickJS doğrudan Node.js erişimini kapatır; izin verilen kabuk
-  programlarının yetkileri ve Docker sınırı: [SECURITY.md](SECURITY.md).
+### Arka plan, oturum ve kayıtlar
 
-`review_changes`, `review_and_fix` ve `reviewAfter` kendi kabuk/model
-akışlarını kullanır; yalnızca `rules`, `bypassPermissions` veya `autoApprove` modlarında
-kullanılabilir. Code Mode yardımcı izinlerinin bunları denetlediği varsayılmamalıdır.
+`code_status` ile `afterSequence` göndererek yeni olayları alın. Olay sayısı ve çıktı boyutu sınırlıdır. Tamamlanan işler yeniden başlatmadan sonra `jobId` ile okunabilir. Çalışan işler kesildiyse `interrupted` durumuna dönüşür ve yeniden yürütülmez.
 
-### OS izolasyonu (`CODE_MODE_ISOLATION=docker`)
+Her çağrı yeni bir QuickJS bağlamı açar. Ön planda aynı `sessionId` kullanıldığında açık JSON `state` başarılı yürütmeler arasında saklanır. Bu alanın sınırı 256 KiB'dir. Yerel JavaScript değişkenlerinin ömrü çağrı süresidir. Aynı oturumda eşzamanlı yürütme reddedilir. `code_session_resume` son 100 iş kimliğiyle oturum bilgilerini döndürür. Desktop/MCP yüzeyinde güncel sunucu izin modu sonraki yürütmeye uygulanır. Yürütme sırasında kaydedilen eski izin modu geçmişe ait bilgidir.
 
-QuickJS doğrudan Node.js erişimini kapatır. İzin verilen kabuk programlarının
-host dosyalarına erişimini ayrıca sınırlamak için worker OS düzeyinde izole edilebilir.
-`CODE_MODE_ISOLATION=docker` ile her iş tek kullanımlık bir Docker
-konteynerinde koşar: işin projesi `/work` olarak bağlanır, host
-dosyaları görünmez, host'un 127.0.0.1 arayüzü — yani onay brokeri —
-konteynerden erişilemez, konuk kabuk Linux'tur. Tehdit modeli ve kalan
-riskler [SECURITY.md](SECURITY.md) dosyasındaki "Sert sınır" bölümünde
-belgelenmiştir.
+~~~powershell
+npm.cmd run transcript -- job 'IS_KIMLIGI'
+npm.cmd run transcript -- session 'OTURUM_KIMLIGI' --interactive
+~~~
 
-Gereksinim: **Linux konteynerleri çalıştırabilen** bir Docker motoru
-(Docker Desktop'ın WSL2 backend'i). Saf Windows container engine yeterli
-değildir: imaj Linux'tur (`node:24-slim`) ve worker Linux konukta koşar;
-motor imaji derleyemezse izolasyon testi hata detayıyla SKIP yazar ve
-"geçti" sayılmaz.
-Kurulum:
+Görüntüleyiciyi sunucuyla aynı `CODE_MODE_DATA_DIR` değerinde çalıştırın. Etkileşimli görünümde `Ctrl+O` ile kayıt açılır, `Enter` ile kod genişletilir. `R` yeniden okur, `Q` çıkar. Bu komutlar terminal görüntüleyicisinde geçerlidir.
 
-```powershell
-.\install-code-mode.ps1 -Isolation docker
-```
+## İzin modları
 
-Script motoru doğrular, `3p-code-engine-worker:<SHA-256>` imajını önden derler ve
-`CODE_MODE_ISOLATION=docker` değişkenini Desktop ortamına yazar (yeniden
-kurulumda `off` değeri değişkeni ortamdan çıkarır). İmajın yoksa ilk iş
-derler. `node worker-image.mjs` güncel etiketi döndürür; worker modülleri,
-Dockerfile, ignore kuralları veya lockfile değişince yeni etiketle imaj
-hazırlanır. Eski sabit isimli imajlar kullanılmaz. Docker CLI varsayılan olarak `docker` adıyla
-çözülür; `CODE_MODE_DOCKER_BIN` ile alternatif bir ikili/makro
-(örn. podman, izole testteki sahte motor) gösterilebilir — `.cmd`/`.bat`
-hedefi sistem kabuğu üzerinden çalıştırılır (Node'un `spawn`'ı batch
-dosyasını doğrudan başlatamaz).
+Sunucu `CODE_MODE_PERMISSION_MODE` ortam değişkenini okur. Mod, proje etkinleştirmesinden ayrıdır. Desktop'taki MCP çağrıları `source: 'mcp'` olarak kaydedilir. Terminalde `user` ve `poll_event` kaynakları ayrı işlenir.
 
-Davranış farkları: `run` PowerShell yerine `/bin/sh` kullanır
-(`uname -s` → `Linux`); kod içindeki mutlak host yolları konuk köküne
-göre çözülür. `callMcp`, `listMcpTools` ve `listMcpServers`, stdio köprüsüyle
-host'taki yapılandırılmış MCP sunucularına erişir. Yapılandırma ve anahtarlar
-konteynere gönderilmez. İzin, auto, hook ve onay denetimi host'ta yapılır;
-ham RPC de bu denetimi atlayamaz. Hook'lar host'ta çalışır: komut/script
-yolları host yolları, olayın `cwd` alanı host proje yoludur; dosya yardımcılarının
-`file_path` alanı konuk yolunu (`/work/...`) korur. Hook'un `updatedInput`
-ile değiştirdiği dosya yolları da bu host→`/work` eşlemesinden geçer;
-MCP argümanları aynen
-iletilir; host dosyası isteyen bir dış araç için host yolu verilmelidir.
-Arka plan çıktı hook'ları da host'ta uygulanır. Onay akışı değişmez:
-broker host'ta kalır, insan aynı web sayfasından karar verir. Sunucu,
-gerçek `docker version` yanıtını `isolation.json` dosyasına yazar; motor
-yoksa izolasyon etkin sayılmaz (`workerIsolated: false`).
+| Mod | Yardımcı çağrıları | Arka plan |
+| --- | --- | --- |
+| `autoApprove` | Varsayılan. Onay brokeri ve sınıflandırıcı kullanılmaz. `ask` kararları otomatik geçilir. Açık `deny` kuralları ve engelleyici hook'lar uygulanır. | Evet |
+| `rules` | Politikadaki `deny`, `ask` ve hook'lar uygulanır. | Evet |
+| `default` | Dosya değişikliği, salt okunur kabul edilmeyen kabuk ve dış MCP çağrılarında modun onayı uygulanır. | Hayır |
+| `acceptEdits` | Dosya yazma ve düzenleme modun ek onayından muaftır. Diğer işlemlerde `default` tabanı uygulanır. | Hayır |
+| `plan` | `REPL`, `Read` ve salt okunur kabul edilen kabuk komutlarına izin verir. | Hayır |
+| `auto` | Kod bloğu çalışmadan önce bir kez sınıflandırılır. Yardımcı çağrılar politikadan geçer. Geçersizleşen inceleme ve hook'un değiştirdiği yazma gibi çağrılar insan onayı isteyebilir. | Evet |
+| `bypassPermissions` | Mod ek onay istemez. Açık `deny`, `ask` ve hook kararları uygulanır. | Evet |
 
-Dış MCP araçları kendi OS yetkileriyle host'ta çalışır; Docker bu araçların
-dosya/ağ etkilerini yalıtmaz. Köprü sadece yapılandırılmış sunucuları çağırır,
-en fazla 64 eşzamanlı istek kabul eder; istek argümanları 256 KiB, yanıtlar
-1 MiB ile sınırlıdır. İptal, bağlı MCP çağrılarını ve host hook'larını da durdurur.
+### Sınıflandırıcı ve onaylar
 
-### Oturum ve transcript
+`auto` için `CODE_MODE_CLASSIFIER_ENDPOINT` ve `CODE_MODE_CLASSIFIER_MODEL` ile bir OpenAI uyumlu API verin. Gerektiğinde `CODE_MODE_CLASSIFIER_API_KEY`, süre için `CODE_MODE_CLASSIFIER_TIMEOUT_MS` kullanın. Sınıflandırıcı, kodun tamamını ve çalışma dizinini alır. Yalnızca terminalin gerçek kullanıcı turu güvenilen niyet bilgisini de taşıyabilir. Güvenli olarak tanınan `allow` kararı çalışmayı başlatır. Model hatası, geçersiz sonuç ve ret yürütmeyi engeller.
 
-`code_session_resume` çalışılan dizini, izin modunu ve son 100 yürütmenin
-iş kimliğini döndürür. Aynı `sessionId` ile `code_execute` çağrısına devam
-edilebilir. Kayıtlı oturumlarda `cwd` otomatik yüklenir; kayıtlı izin modu bir
-kayıt tutucudur, kapı değildir: `CODE_MODE_PERMISSION_MODE` kayıtlı moddan
-farklı olsa bile devam edilir ve oturum bitişte yürüdüğü modu yeniden yazar.
-Devam için projenin Code Mode'ta hâlâ etkin olması yeterlidir; kapalı veya
-bozuk etkinleştirme ayarı gerekçesiyle açık hatadır.
-Her işin kod kaydı ve düzenleme önizlemesi `code_status` ile açılabilir.
-Yerel görüntüleyici de aynı kayıtları okur:
+Aynı sunucuda yeni `auto` incelemesi başladığında önceki çalışan `auto` işlerinin inceleme geçerliliği kaldırılır. İzin gerektiren sonraki yardımcı çağrılar broker üzerinden insan kararı bekler. `code_status` bağlantıyı `pendingApprovals` içinde gösterir. Zaman aşımı varsayılan olarak 120.000 ms'dir. Güvenilen sunucu ortamındaki `CODE_MODE_APPROVAL_TIMEOUT_MS` 100–120.000 arasında olabilir. Süresi dolan bir işin onay durumu, terminalde aynı oturuma gelen gerçek kullanıcı mesajıyla yeniden kurulabilir. Desktop/MCP'de bu işin onayları iş sona erene kadar reddedilir.
 
-```powershell
-node code-mode-transcript.mjs session "oturum-kimligi"
-node code-mode-transcript.mjs job "is-kimligi"
-node code-mode-transcript.mjs session "oturum-kimligi" --interactive
-node code-mode-transcript.mjs job "is-kimligi" --interactive
-```
+## Kurallar ve hook'lar
 
-Görüntüleyici, MCP sunucusuyla aynı `CODE_MODE_DATA_DIR` değerini kullanır.
-Oturum komutunda aynı `CODE_MODE_PERMISSION_MODE` değerini kullanın.
-Etkileşimli görünümde `Ctrl+O` transcript'i açar/kapatır; kod satırları önce
-daraltılmıştır. Yukarı/aşağı ile iş seçilir, `Enter` ile kod genişletilir,
-`R` ile disk kaydı yenilenir, `Q` ile çıkılır. Normal görünüm yardımcı işlemleri,
-düzenleme önizlemelerini ve sonucu gösterir. Bu yerel terminal görüntüleyicisidir;
-Desktop uygulamasının kendi kısayollarını veya konuşma arayüzünü değiştirmez.
+Varsayılan politika [code-mode-policy.json](code-mode-policy.json) dosyasıdır. Güvenilen başka bir JSON dosyası için sunucunun `CODE_MODE_POLICY_PATH` değerini mutlak yola ayarlayın. Politika yeni yürütmede okunur. Geçersiz veya eksik yapılandırma ilgili yürütmeyi engeller.
 
-Çağrı parametreleri: `cwd` (mutlak başlangıç dizini), `code` (JavaScript kodu), `timeoutMs` (1000-600000, varsayılan 600000), isteğe bağlı `sessionId`. `return` veya son üst seviye ifadeyi kullanabilirsiniz; Acorn AST ayrıştırıcısı noktalı virgülsüz geçerli JavaScript'i, yorumları ve template literal'ları korur. Her çağrı yeni bir QuickJS motorudur; normal değişkenler çağrılar arasında korunmaz. Aynı `sessionId` ile JSON `state` başarılı çağrılar arasında diske kaydedilir (en fazla 256 KiB). Kayıtlar geçici dosyaya yazılıp yeniden adlandırılarak atomik saklanır; hedefin geçici OS kilitlenmesi (Windows'ta gözlenen EPERM) ya da geçici dosyanın kaybı (ENOENT) kayıptan önce sınırlı sayıda denemede, her denemede taze bir geçici dosya ile aşılmaya çalışılır. Başarısız çağrılar yeni state'i kaydetmez; aynı oturuma eşzamanlı çağrı reddedilir. `code_session_delete` state'i temizler; aynı veri dizinini birden fazla sunucuyla eşzamanlı kullanmayın.
+~~~json
+{
+  "deny": ["Edit(**/.env)", "Bash(git push *)"],
+  "ask": ["Write"],
+  "preToolUse": [
+    {
+      "tool": "Bash",
+      "type": "http",
+      "url": "http://127.0.0.1:8090/pre-tool",
+      "timeoutMs": 5000,
+      "onFailure": "block"
+    }
+  ]
+}
+~~~
 
-- `await read(file)` — UTF-8 metin okur (1 MiB sınırı).
-- `await write(file, text)` — dosya oluşturur veya üzerine yazar (eksik ara dizinleri otomatik oluşturur).
-- `await edit(file, oldText, newText)` — tam olarak bir kez eşleşen metni değiştirir.
-- `await run(command, {cwd, timeoutMs})` — kabuk komutu çalıştırır (host'ta PowerShell, Docker konteynerinde `/bin/sh`); `ok`, `exitCode`, `stdout`, `stderr`, `timedOut`, `truncated` döner. Başarısız çıkış kodunu kodun kendisi kontrol etmelidir.
-- `log(...values)` — sonuca sınırlı günlük ekler.
-- `await callMcp(server, tool, args)` - aşağıda yapılandırılan bir stdio MCP sunucusunun aracını çağırır.
-- `await listMcpServers()` ve `await listMcpTools(server)` - yapılandırılmış stdio sunucularını ve araçlarını keşfeder.
-- ``await $`komut`.text()`` - başarılı komutun çıktısını döndürür; başarısız komutta hata verir. ``await $`komut`.nothrow()`` - hata fırlatmadan sonuç nesnesini döndürür. Şablona eklenen her değer tek bir kabuk argümanı olarak tırnaklanır. Ortama göre Windows PowerShell veya POSIX shell kullanılır; tüm Claude Code sözdizimi ve davranışlarının eşdeğerliği garanti edilmez.
+Araç adlarına `REPL`, `Read`, `Write`, `Edit`, `Bash`, `McpListTools` ve `mcp__<sunucu>__<araç>` dahildir. `mcp__<sunucu>__*`, bir sunucunun araçlarına eşleşir. `Bash(...)` kuralları komut metnine uygulanır. `deny` ve `ask` için eşleşen bir alt komut yeterlidir. `allow`, çözümlenebilen komutun tamamını kapsamalıdır. Yönlendirme, iç içe komut çalıştırma ve benzeri sözdiziminde komut metni kurallarının kapsamı sınırlıdır.
 
-Yürütme hataları yutulmaz:
+Dosya desenlerinde `//yol` mutlak, `~/yol` ev dizinine göre, `/yol` çalışma dizinine göredir. Windows sürücüleri `//c/...` biçiminde yazılır. `*` bir yol bölümünü, `**` birden fazla bölümü kapsayabilir. `Edit(yol)`, `Edit` ve `Write` çağrılarına eşleşir. `Write(yol)` sadece `Write`, `Read(yol)` sadece `Read` çağrılarına eşleşir. Negasyon desenleri ve genel `allow: ["*"]` geçersizdir. [Desen uygulaması](code-mode-rules.mjs)
 
-- Yardımcı çağrısı başarısız olduysa ve kod o hatayı `await`/`catch` ile
-  ele almadıysa, yürütme o hatayla reddedilir — bekletilmiş bir yardımcının
-  sessiz reddi sonucu "başarılı" gösterilmez.
-- `setTimeout` geri çağrısı fırlattıysa ve yürütme hâlâ aktifse hata aynı
-  kanaldan raporlanır. Yürütme tamamlandıktan sonra tetiklenecek unutulmuş
-  zamanlayıcılar çalıştırılmaz (kapanışta temizlenir).
-- Yardımcı sonucu JSON'a döndürülemezse (BigInt, döngüsel yapı) hata
-  gerekçesiyle bildirilir; seriye döktürmek `undefined` veren değerler
-  (fonksiyon, sembol) `null` olarak sınırdan geçer.
-- Bekleyen iş içinde bellek sınırı aşımı (64 MiB) ya da başka bir motor
-  hatası yürütmeyi o hata mesajıyla durdurur.
-- `timeoutMs` yalnızca çalışan kod için değil, bir yardımcıda bekleyip atıl
-  durumdaki yürütme için de geçerlidir: süre sonunda yürütme "süre aştı"
-  hatasıyla biter, motor bağlamı kapatılır ve daha sonra sonuçlanan bekleyen
-  işlemler sessizce yok sayılır — asılı süreç, çökme veya unhandled rejection
-  bırakılmaz.
+İlk `deny` denetimi gönderilen girdiye uygulanır. `PreToolUse` hook'ları yürür ve değiştirilen girdiye `deny` tekrar uygulanır. Ardından `plan` sınırı, güncel girdi için `ask` ve `allow`, izin modunun tabanı ve varsa `auto` incelemesi değerlendirilir. Hook'un `allow` kararı açık `deny`, `ask` veya `plan` kısıtını kaldıramaz. `autoApprove` modunda `ask` yine otomatik geçilir.
 
-`code_start` arka planda kod başlatır; `code_status` iş durumunu/sonucunu ve `log`, komut çıktısı veya yardımcı işlem olaylarını alır. Sonraki sorguda `afterSequence` ile yalnızca yeni olaylar istenebilir. Olaylar boyut ve sayı sınırlarına tabidir; kayıp olay ve kesilmiş çıktı ayrıca bildirilir. Bu, sürekli itilen bir yayın değil, istemcinin aralıklarla sorgulamasıdır. `code_cancel` işi durdurmayı dener. Tamamlanan sonuçlar ve kod kaydı yeniden başlatmadan sonra iş kimliğiyle okunabilir; yeniden başlatma sırasında çalışan işler devam ettirilmez, sonuçları bilinmeyen `interrupted` olarak görünür. `code_job_delete` tamamlanmış işin saklanan kaydını siler. Arka plan limiti iki saattir. Durdurma, kendini ayırmış tüm alt süreçlerin sonlandırılacağını garanti etmez.
+### Hook biçimleri
 
-Durum ve iş kayıtları varsayılan olarak Windows'ta `%LOCALAPPDATA%\3p-code-engine` altında düz JSON olarak tutulur; `CODE_MODE_DATA_DIR` ile değiştirilebilir. Kod, çıktı ve hassas bilgi içerebilir; veriler şifrelenmez, otomatik süre sonunda silinmez. `code_session_delete` ve `code_job_delete` ile temizlenebilir. Çalışma sırasında sunucu çökerse kayıt ve disk yazımı tamamlanmamış olabilir.
+- `command` varsayılan türdür. `command` mutlak çalıştırılabilir dosya yolu, `args` ayrı argümanlardır. Olay JSON'u standart girdiden gelir. `http` türü olay JSON'unu POST eder ve yönlendirmeleri izlemez. `mcp_tool` türü, `server` ve `mcpTool` ile bağlanan aracı çağırır. Olay alanları isteğe bağlı `arguments` değerlerinin üzerine yazılır.
+- `PreToolUse` girdisi `hook_event_name`, `tool_name`, `tool_input`, `cwd` ve varsa `session_id` alanlarını taşır. Hook'lar tanım sırasıyla çalışır. `hookSpecificOutput.updatedInput` araç girdisinin tamamını değiştirir ve sonraki hook'a aktarılır. `REPL` kodu bu alanla değiştirilemez. `additionalContext` sonucu modele aktarır.
+- `timeoutMs` varsayılanı 5.000, aralığı 100–600.000 ms'dir. Hook çıktısı en fazla 64 KiB olabilir. Komut kodu `0` ile boş çıktı veya JSON karar kabul edilir. Kod `2` ve açık `block` veya `deny` kararları engeller. Normal başarısız çıkışlar `onFailure: "block"` ile engellenir. Zaman aşımı, başlatma, geçersiz yanıt ve HTTP/MCP hataları varsayılan olarak engeller. `onFailure: "continue"` bu hata davranışını değiştirebilir.
+- `userPromptSubmit`, arka plan sonucu yayımlanmadan önce `source: "poll_event"` olayını alır. Sonuç, günlükler, `state` ve bekletilen olaylar JSON metni olarak `prompt` alanına eklenir. Engellemede `outputBlocked` ile neden döner. Daha önce uygulanmış dosya etkileri kalır.
+- `hooks.PreToolUse` ve `hooks.UserPromptSubmit` biçimi bir Claude Code uyumluluk alt kümesidir. Düz `preToolUse` ve `userPromptSubmit` biçimleriyle karıştırmayın. `matcher` tam araç adlarını, `|` ile ayrılan adları veya `*` kabul eder. `timeout` saniye cinsindendir ve `timeoutMs` ile birlikte verilmez. Desteklenmeyen alanlar hata verir. [Uyumluluk ayrıntıları](CODE-MODE-COMPATIBILITY.md#izinler-ve-hook-farkları)
 
-`read`, `write`, `edit`, `run` ve `callMcp` yardımcılarından geçen başarılı işlemler sonuçtaki `operations` dizisindedir. `edit` eski/yeni metnin ilk 2000 karakterini döndürür. Kabuk programlarının içindeki her dosya/ağ işlemi ayrıca kaydedilmez; kayıt hassas içerik içerebilir. Doğrudan Node.js çağrısı QuickJS içinde mevcut değildir.
+## Docker ve dış MCP
 
-### Diğer MCP sunucuları
+`CODE_MODE_ISOLATION=docker` seçilince her iş tek kullanımlık bir Linux konteynerinde çalışır. Proje `/work` altında yazılabilir olarak bağlanır. Linux Docker motoru ve worker imajı gerekir. `node worker-image.mjs` imaj etiketini hesaplar. İlk hazırlık veya kaynak değişikliği imaj derlemesi gerektirebilir. Motor veya imaj kullanılamazsa iş hata verir. [Docker sınırları](SECURITY.md#docker-sınırı)
 
-Kurulum scripti `CODE_MODE_MCP_CONFIG_PATH` değerini seçilen Desktop yapılandırmasına bağlar; kayıtlı ve devre dışı olmayan stdio sunucuları otomatik keşfedilir, `3p-code-mode` kendisini çağırmaması için hariç tutulur. Kendi Desktop araçları bu MCP listesine dahil değildir. Ek/override sunucular için MCP sunucusunu başlatan ortamda `CODE_MODE_MCP_SERVERS` değişkenini JSON olarak tanımla:
+Kurulum scripti `CODE_MODE_MCP_CONFIG_PATH` değerini Desktop dosyasına bağlar. Etkin stdio sunucuları bu dosyadan keşfedilir. Ek sunucular ve geçersiz kılmalar için `CODE_MODE_MCP_SERVERS` JSON nesnesini sunucu ortamında verin.
 
-```powershell
-$env:CODE_MODE_MCP_SERVERS = '{"example":{"command":"C:\\Program Files\\nodejs\\node.exe","args":["C:\\path\\server.mjs"]}}'
-```
+~~~powershell
+$env:CODE_MODE_MCP_SERVERS = '{"example":{"command":"C:\\Program Files\\nodejs\\node.exe","args":["C:\\tools\\example-server.mjs"]}}'
+~~~
 
-Kod içinden `await callMcp('example', 'tool_name', {key: 'value'})` kullanılabilir. Her çağrı yapılandırılmış sunucuyu başlatıp kapatır; mevcut Desktop MCP oturumunu devralmaz. Alt sunucu SDK'nın varsayılan ortam değişkenlerini ve yapılandırmada verilen `env` değerlerini alır; kendi işletim sistemi yetkileriyle çalışır. Desktop üzerinden başlatırken ortam değişkeni MCP yapılandırmasında tanımlanmalıdır.
-
-```javascript
-const found = await run('rg -l "maxAttempts: 3" src');
-if (found.exitCode !== 0) throw new Error(found.stderr || 'Dosya bulunamadı');
-const file = found.stdout.trim().split(/\r?\n/)[0];
-await edit(file, 'maxAttempts: 3', 'maxAttempts: 5');
-const tests = await run('npm test', { timeoutMs: 90000 });
-return { file, tests };
-```
-
-Kodun üst seviye zaman aşımı tüm akış içindir. Komutun ayrıca zaman aşımı vardır. Windows'ta zaman aşımında işlem ağacı sonlandırılmaya çalışılır. Uzun çıktılar kesilir. `tools.Read`, `tools.Write`, `tools.Edit` ve `tools.Bash`, mevcut yardımcıların aynı denetimlerden geçen adlarıdır.
-
-## Test
-
-MCP sonuçları, kod kaydını ve yardımcı düzenlemelerin satır bazlı önce/sonra önizlemesini ikinci metin bloğu olarak içerir. Görünüm MCP istemcisine bağlıdır. Yerel görüntüleyici aynı önizlemeyi terminalde açar.
-
-`npm test`, MCP yürütmeyi, broker üzerinden insan onayını (kabul, ret, süre
-aşımı, istemci kesilmesi, tek kullanımlık nonce, Origin denetimi, denetim
-zinciri, yeniden başlatma), arka plan işlerini, sunucu yeniden başlatma sonrası
-devamı, auto onayının geçersizleşmesini, onay süresinin dolmasını, çıktının
-engellendiğinde sızmamasını, command/HTTP/MCP hook'larını, etkileşimli
-transcript kontrollerini, review ve kurulum akışlarını doğrular.
-`test-code-mode-isolation.mjs` her makinede sahte bir motorla kapatma
-davranışını doğrular (motor dururken iş çalışmaz, hata motorun kendisidir,
-gölge `isolation.json` yalıtım iddia etmez, motor dönünce iş yeniden
-dener) — Docker motoru varsa ayrıca konteyner sınırını doğrular: proje
-dışı dosya erişimi, host loopback'e erişilemezlik, Linux konuk kabuğu,
-broker onayı (`fromUi` denetim kaydıyla) ve iptalde konteyner temizliği.
-Motor yoksa bu kısımlar SKIP yazar ve "geçti" sayılmaz.
-`npm run test:isolation:required` motor veya build yokluğunu hata sayar.
-CI'daki `Docker isolation (required)` işi Ubuntu/Linux üzerinde bu komutu
-çalıştırır; Windows test işi ayrı kalır. Branch protection gerekiyorsa bu
-kontrolün GitHub depo kurallarında da zorunlu seçilmesi gerekir.
-HTTP ve sınıflandırıcı testleri yerel TCP bağlantısı gerektirir. Canlı Desktop
-modelinin gerçek araç seçimi ve istemcinin form görünümü ayrı doğrulama gerektirir.
-Özellik karşılaştırması ve canlı doğrulama adımları:
-[CODE-MODE-COMPATIBILITY.md](CODE-MODE-COMPATIBILITY.md).
+`3p-code-mode` kendisini çağırmaz. Dış araçlar Desktop oturumundan bağımsız başlatılır. Docker modunda host köprüsü çağrıları politika denetiminden geçirir. Köprü eşzamanlı 64 istek, 256 KiB argüman ve 1 MiB yanıt sınırı uygular. Hook ve MCP programlarının kendi dosya ve ağ yetkileri host'a aittir. Docker'da dosya yardımcıları için proje içi bağıl yollar kullanın. Dış MCP aracı host dosyasına erişecekse aracın beklediği host yolunu verin.

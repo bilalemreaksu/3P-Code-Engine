@@ -1,53 +1,89 @@
-# 3P Code Engine: kod inceleme
+# Git değişikliklerini inceleme
 
-Bu özellik Claude Code ekibinin inceleme sürecinden esinlenen yerel bir ilk uygulamadır. Git farkını yerel modele gönderir; farklı bakış açılarıyla ayrı istekler, aday bulgular için bağımsız doğrulama istekleri, risk tahmini ve isteğe bağlı test komutları çalıştırır. Çağrılar tek model yuvasına uygun olarak sırayla yapılır; bunlar birbirinden bağımsız model oturumlarıdır, ayrı model veya gerçek insan değildir.
+İnceleme motoru bir Git tabanına göre değişiklikleri toplar, isteğe bağlı kontrolleri çalıştırır ve aday bulguları ayrı model istekleriyle doğrular. Çıktı bir risk tahmini, doğrulanan ve belirsiz bulgular, kontrol sonuçları ve kapsam uyarıları içerir. İnsan incelemesi ve GitHub birleştirme politikaları kendi süreçlerinde yürütülür.
 
-## Gereksinimler ve bağlantı
+## Hızlı başlangıç
 
-Node 24, Git ve OpenAI uyumlu `/models` ve `/chat/completions` sunucusu gerekir. Varsayılan adres `http://127.0.0.1:9931/v1`'dir; farklı sunucular için `REVIEW_MODEL_ENDPOINT` ayarlayın. Model adı belirtilmezse `/models` üzerinden tek bir model bulunması gerekir; birden fazla model varsa `REVIEW_MODEL_NAME` belirtilmelidir. `/models` desteklemeyen sunucularda da model adını açıkça ayarlayın. Sunucuya diff ve kökteki AGENTS.md, CLAUDE.md ve REVIEW.md gönderilir.
+Node.js 24+, Git ve OpenAI uyumlu bir model uç noktası gerekir. Varsayılan API tabanı `http://127.0.0.1:9931/v1` olur. `REVIEW_MODEL_NAME` verilmezse motor `/models` çıktısında tam bir model kimliği bekler. Birden fazla modelde veya model listeleme desteği bulunmadığında kimliği açıkça verin. Gerekirse `REVIEW_MODEL_API_KEY` kullanın.
 
-```powershell
+Motorun depo kökünde çalıştırın.
+
+~~~powershell
 $env:REVIEW_MODEL_ENDPOINT = 'http://127.0.0.1:9931/v1'
-$env:REVIEW_MODEL_NAME = 'model-adi' # Tek model sunuluyorsa isteğe bağlı
-npm run review -- --cwd $PWD.Path --base HEAD --mode standard --intent 'Değişikliğin amacı' --check 'npm test'
-```
+$env:REVIEW_MODEL_NAME = 'MODEL_KIMLIGI'
+$project = 'C:\Projects\uygulama'
+npm.cmd run review -- --cwd $project --base HEAD --mode standard --intent 'Değişikliğin amacı' --check 'npm test'
+~~~
 
-`--base HEAD` mevcut commit'e göre değişiklikleri inceler. Başka bir commit veya branch de verilebilir. Birden fazla `--check` belirtilebilir. `--auto-check`, kökteki package.json dosyasından mevcut `lint`, `typecheck`, `test`, `build` script'lerini seçer. Her iki seçenek de çalışma dizininde gerçek komutlar çalıştırır ve dosyaları değiştirebilir; güvenliğinden çağıran sorumludur. Diğer proje türleri için komutları açıkça belirtin; bu seçenek güvenlik taraması veya UI kontrolü bulmaz.
+`--base HEAD` çalışma ağacını mevcut commit ile karşılaştırır. Bir branch veya commit de kullanılabilir. Her `--check` ayrı bir gerçek kabuk komutu çalıştırır. `--auto-check`, proje kökündeki `package.json` içinde tanımlı `lint`, `typecheck`, `test` ve `build` komutlarını bu sırayla ekler. Diğer kontrolleri açıkça belirtin.
 
-MCP sunucusu `review_changes` aracını da sunar: `cwd`, `base`, `intent`, `mode`, isteğe bağlı `checkCommands` ve `autoChecks` alır. `code_execute` içinde isteğe bağlı `reviewAfter` nesnesi verilirse kod çalıştıktan sonra inceleme başlar. Kod çalıştırma başarısı inceleme başarısı anlamına gelmez; ayrıca `review.status` kontrol edilir. Sunucuyu yeniden başlattıktan sonra Desktop tarafından keşfedilmesi gerekir. Model sunucusu ve Claude Desktop ile uçtan uca çalışma ayrıca doğrulanmalıdır.
+## İnceleme modu ve sonuç
 
-## Rapor ve sınırlar
+| Mod | Bakış açısı sayısı | Aday bulgu başına doğrulama isteği |
+| --- | --- | --- |
+| `quick` | 2 | 1 |
+| `standard` | 3 | 2 |
+| `deep` | 4 | 2 |
 
-- Quick iki, Standard üç, Deep dört ayrı bakış açısı kullanır. Quick'te bir, diğerlerinde iki bağımsız doğrulama isteğiyle adaylar değerlendirilir. Aynı modelin tekrarları bağımsız uzmanlar gibi garanti vermez.
-- Çıktı, commit ve değişiklik özeti, tahmini risk, bulgular, belirsiz bulgular, kontrol sonuçları ve uyarılar içerir. CLI çıkış kodu: 0 inceleme tamam ve bulgu yok; 1 doğrulanmış bulgu var; 2 eksik inceleme veya hata. Test çalıştırılmadığında durum eksiktir.
-- Takip edilmeyen 256 KiB'a kadar metin dosyaları da değişikliğe eklenir. Binary dosyalar, bağlantılar ve büyük takip edilmeyen dosyalar incelenmez ve raporda belirtilir. Büyük diff kesilir ve inceleme eksik sayılır. Model ihtiyaç duyarsa iki turda en fazla altışar küçük dosya isteyebilir; proje dışına veya tanımlı gizli dosya yollarına erişemez. Bu isim tabanlı filtre tüm sırları tespit edemez; diff'i modele göndermeden önce gözden geçirin. Git'in yok saydığı takip edilmeyen dosyalar incelenmez.
-- Model yanıtı veya doğrulaması başarısızsa temiz sonuç verilmez. Çalışma ağacı inceleme sırasında değişirse yeniden çalıştırılmalıdır. Bulguların doğruluğu ve satır numaraları ayrıca insan tarafından kontrol edilmelidir.
-- Bu uygulama GitHub branch koruması/insan onayı/merge queue uygulamaz ve yayın/rollback yapmaz. Risk ve onay sayısı yalnızca öneridir. Çalıştırılan komutlar sandbox içinde değildir.
-- Model yapılandırması için isteğe bağlı `REVIEW_MODEL_API_KEY` ortam değişkeni kullanılabilir; anahtarı komut satırına yazmayın.
+İstekler tek model yuvasına uygun olarak sıralı çalışır. Her doğrulama istek bağlamı ayrıdır. Bir adayın bulgu sayılması için bütün doğrulama isteklerinde onaylanması gerekir. Görüşler ayrışırsa bulgu belirsiz kalır.
 
-## Rapor ve inceleme turları
+| Durum | CLI çıkış kodu | Anlamı |
+| --- | --- | --- |
+| `reviewed` | 0 | İnceleme tamamlandı ve onaylanmış bulgu kalmadı. |
+| `findings` | 1 | İnceleme tamamlandı ve onaylanmış bulgu var. |
+| `incomplete` veya hata | 2 | Kanıt, kapsam, kontrol veya model yanıtı incelemeyi tamamlamak için yetersiz. |
 
-Komuta `--report 'C:\workspace\review.md' --ledger 'C:\workspace\review-history.json'` eklenirse Markdown raporu ve yerel tur geçmişi yazılır. Aynı dosyayı kullanan üçüncü turda `history.limitReached` true olur; bu bir uyarıdır, yeniden inceleme veya merge işlemini engellemez. Her PR için ayrı geçmiş dosyası kullanın. Önceki bulgular `newFindingKeys` listesinden ayrılır.
+Hiç kontrol çalıştırılmadığında, bir kontrol başarısız olduğunda, çalışma ağacı değiştiğinde veya kapsama dair uyarı olduğunda rapor eksik sayılabilir. Sonuçtaki dosya ve satır numaralarını ayrıca inceleyin.
+
+### Rapor ve inceleme geçmişi
+
+~~~powershell
+$reviewReport = Join-Path $env:TEMP '3p-review.md'
+$reviewJson = Join-Path $env:TEMP '3p-review.json'
+$reviewLedger = Join-Path $env:TEMP '3p-review-history.json'
+npm.cmd run review -- --cwd $project --base HEAD --auto-check --report $reviewReport --json $reviewJson --ledger $reviewLedger
+~~~
+
+`--report` Markdown, `--json` makine tarafından okunabilir rapor, `--ledger` yerel inceleme geçmişi yazar. Her PR için ayrı bir geçmiş kullanın. Üçüncü turdan itibaren `limitReached` işaretlenir. `newFindingKeys` önceki kayıtlarda bulunmayan bulguları gösterir. Bu bilgi raporlama amaçlıdır.
+
+## MCP
+
+`review_changes` aracı `cwd`, `base`, `intent`, `mode` ve isteğe bağlı `checkCommands` ile `autoChecks` alır. `code_execute` için `reviewAfter` verildiğinde başarılı kod yürütmesinin ardından inceleme başlar. Kod yürütmesinin sonucuyla birlikte `review.status` alanını kontrol edin.
+
+`review_changes`, `review_and_fix` ve `reviewAfter` MCP yüzeyinde `rules`, `bypassPermissions` veya `autoApprove` ile çalışır. Terminalin model araç listesi yürütme araçlarını içerir. Terminalden inceleme yapmak için ayrı `npm run review` komutunu kullanın.
 
 ## Otomatik düzeltme döngüsü
 
-`npm run review:fix -- --cwd 'C:\path\to\repo' --base HEAD --auto-check` veya MCP `review_and_fix`, doğrulanmış ilk bulgu için modelden bir metin düzenlemesi ister, dosyaya uygular ve yeniden test/inceleme yapar. Bu işlem dosyaları gerçekten değiştirir. Her turda tek dosya değiştirilir; yalnızca bulgu dosyası ve tam bir kez eşleşen metin kabul edilir. Üçüncü inceleme turunda hâlâ bulgu varsa durur; eksik inceleme veya başarısız testte otomatik düzeltme yapmaz. Önceden yapılan değişiklikleri geri almaz; sonuçları Git diff ile kontrol edin. Bu döngü yalnızca kullanıcı veya istemci aracı çağırdığında çalışır ve genel amaçlı özerk bir ajan değildir.
+~~~powershell
+npm.cmd run review:fix -- --cwd $project --base HEAD --auto-check
+~~~
 
-## GitHub'a uyarlama
+Komut veya `review_and_fix` aracı, tamamlanmış incelemenin ilk doğrulanmış bulgusu için modelden düzenleme ister. Döngü her turda yalnızca bulgudaki dosyayı ve tam bir kez eşleşen metni değiştirebilir. Ardından kontroller ve inceleme yeniden çalışır. En fazla üç inceleme turunda en fazla iki düzenleme yapılır. MCP çağrısı `maxRounds` değerini 1–3 arasında seçebilir.
 
-Projedeki `.github/workflows/ci.yml` PR, push ve merge queue olaylarında Windows testlerini ve bağımlılık denetimini çalıştırır. PR şablonu da eklenmiştir. GitHub deposunda CI'yı zorunlu kontrol yapmak, insan onaylarını ve konuşma çözümlemesini zorunlu tutmak, eski onayları geçersiz kılmak ve merge queue'yu açmak repo yöneticisinin GitHub ayarlarını gerektirir. Bunlar yalnızca workflow dosyasıyla etkinleşmez.
+Eksik inceleme, başarısız kontrol veya tur sınırı döngüyü durdurur. Önceki değişiklikler çalışma ağacında kalır. `review:fix`, yalnızca `reviewed` durumunda çıkış kodu 0 verir. Diğer durumlarda kod 2 döndürür. Son değişiklikleri `git diff` ile inceleyin.
 
-`.github/workflows/ai-review.yml`, depo değişkeni `REVIEW_MODEL_ENDPOINT` tanımlanırsa her PR'da AI incelemesi başlatır, raporu artifact olarak saklar ve sonucu kontrol olarak döndürür. İsteğe bağlı `REVIEW_MODEL_NAME` değişkeni model adını belirler. `127.0.0.1:9931` GitHub'ın bulut runner'ında senin bilgisayarın değildir: runner'dan erişilebilir bir endpoint gerekir. Workflow PR koduyla sır paylaşmaz, özel API anahtarını desteklemez ve otomatik yorum göndermez. Değişken tanımlı değilse iş atlanır; zorunlu branch kontrolü ve güvenilir ağ geçidi ayrıca yapılandırılmalıdır. Workflow gerçek GitHub ortamında henüz test edilmedi.
+## Veri ve çalıştırma sınırları
 
-GitHub CLI ile yerelde hazırlanmış bir incelemeyi PR'a yorum olarak göndermek için önce incelemeyi PR'ın güncel base commit'iyle çalıştırın ve JSON raporunu repo dışına yazın (`--json C:\workspace\review.json`). PR branch'i yerelde checkout edilmiş, çalışma ağacı temiz ve `gh` ilgili depoda yetkili olmalıdır:
+- İnceleme uç noktası Git diff'ini ve varsa kökteki `AGENTS.md`, `CLAUDE.md` ve `REVIEW.md` içeriğini alır. Model her inceleme ya da doğrulama isteğinde en fazla iki turda altışar küçük dosya parçası isteyebilir. Kanıt okumaları depo sınırı ve hassas ad filtresiyle kısıtlanır. Git diff'inde bulunan izlenen hassas veriler ayrıca ayıklanmaz.
+- Uygun takip edilmeyen metin dosyaları 256 KiB'a kadar diff'e eklenebilir. Büyük, ikili, hassas adlı veya normal dosya olmayan girdiler raporun kapsamını daraltır. Git'in yok saydığı takip edilmeyen dosyalar değerlendirme dışında kalır. Çok büyük bir diff kesilir ve rapor eksik sayılır.
+- Kontrol komutları host kabuğunda kullanıcı yetkileriyle çalışır ve dosya değiştirebilir. Code Mode yardımcı kuralları ile Docker worker izolasyonu bu akışa uygulanmaz. [Güvenlik modeli](SECURITY.md#kabuk-ve-dış-araçlar)
 
-```powershell
-node publish-pr-review.mjs --cwd 'C:\path\to\repo' --pr 123 --json 'C:\workspace\review.json'
-# Önizleme doğruysa aynı komutun sonuna --publish eklenebilir.
-```
+## GitHub
 
-Yayın aracı PR'ın base ve head commit'lerini, yerel çalışma ağacını ve diff özetini denetler; eksik inceleme göndermez. Yalnızca toplu yorum oluşturur, satır içi yorum, insan onayı, merge veya otomatik kapanış yapmaz. Bu özellik henüz gerçek PR üzerinde test edilmemiştir.
+[CI iş akışı](.github/workflows/ci.yml), PR, push ve merge queue olaylarında Windows ve Ubuntu üzerinde test ve bağımlılık denetimi yapar. Ubuntu'da ayrı bir zorunlu Docker izolasyon işi çalışır. Zorunlu kontroller ve insan onayı gibi kurallar GitHub depo ayarlarında yönetilir.
+
+[AI inceleme iş akışı](.github/workflows/ai-review.yml), depo değişkeni `REVIEW_MODEL_ENDPOINT` ayarlandığında PR'ın head commit'ini base commit'e göre inceler. `REVIEW_MODEL_NAME` isteğe bağlıdır. Uç nokta GitHub runner'ından erişilebilir olmalıdır. Yerel `127.0.0.1` yalnızca komutun çalıştığı makineyi gösterir. İş akışı model anahtarı almaz, Markdown ve JSON çıktılarını artifact olarak saklar ve inceleme sonucunu kontrol durumuna yansıtır.
+
+### PR yorumunu önizleme ve yayımlama
+
+PR'ın güncel base commit'iyle inceleme yapın. JSON raporunu repo dışına yazın. Yerel çalışma ağacı temiz ve `gh` ilgili depoda yetkili olmalıdır.
+
+~~~powershell
+node publish-pr-review.mjs --cwd $project --pr 123 --json $reviewJson
+~~~
+
+Komut PR'ın base ve head commit'lerini, yerel çalışma ağacını ve diff özetini doğrular. Önizlemeyi inceledikten sonra `--publish` eklemek toplu PR inceleme yorumu gönderir. Tamamlanmış ve belirsiz bulgusu kalmamış raporlar yayımlanabilir.
 
 ## İnceleme kalitesini ölçme
 
-`node review-eval.mjs cases.json`, insan tarafından etiketlenmiş örneklerden recall ve precision hesaplar. Girdi bir dizidir; her öğe `{ "id": "1", "expected": [{ "file": "src/a.js", "line": 10, "category": "bug" }], "report": { "status": "findings", "findings": [...] } }` biçimindedir. Eşleştirme dosya ve varsa satır/kategori üzerinden yapılır; bu yaklaşık bir ölçümdür. Hazır gerçek hata veri seti veya otomatik zamanlama içermez.
+`node review-eval.mjs cases.json`, insan tarafından etiketlenmiş örnekler üzerinden precision ve recall hesaplar. Girdi, her biri `id`, `expected` ve `report` alanları taşıyan bir JSON dizisidir. Eşleştirme dosyaya ve belirtilmişse kategori ile satıra dayanır. `report.findings` üretilen bulguları içerir. Ölçümün kapsamı etiketlerin ve eşleştirme alanlarının kapsamıyla sınırlıdır. [İnceleme yönergesi](REVIEW.md)

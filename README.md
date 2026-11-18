@@ -1,51 +1,55 @@
 # 3P Code Engine
 
-Modelden bağımsız kod yürütme ve inceleme motoru: MCP sunucusu, etkileşimli
-terminal, QuickJS JavaScript yürütmesi, paralel araç çağrıları ve arka plan
-işleri. Varsayılan `autoApprove` insan onayı veya sınıflandırıcı çağrısı
-olmadan çalışır. Bu proje Anthropic'in Claude Code ürününün parçası değildir.
+3P Code Engine, modelin ürettiği JavaScript ile birden fazla araç çağrısını tek yürütmede birleştirir. Dosya ve kabuk işlemlerini sıralayabilir, bağımsız çağrıları paralel çalıştırabilir ve modele kısa bir sonuç döndürebilir. Proje bir MCP sunucusu, etkileşimli bir terminal ve Git değişikliklerini inceleyen ayrı bir araç sunar.
 
-## Bileşenler
-
-v0.12: Node.js erişimi olmayan QuickJS yürütmesi, AST tabanlı son ifade
-sonucu, varsayılan onaysız kurulum ve yalnızca Code Mode araçları sunan
-etkileşimli terminal. Docker ve Desktop 3P MCP desteği korunur.
-
-Terminal OpenAI uyumlu API'lere, Anthropic Messages ve Gemini generateContent
-API'lerine bağlanır. Native araç çağrısı olmayan modeller için JSON metin
-protokolü vardır. Model adı kısıtlanmaz; modelin geçerli JavaScript/JSON
-üretebilmesi gerekir. MCP yüzeyini kullanacak uygulamanın MCP desteği gerekir.
-
-| Bileşen | Açıklama |
+| Kullanım | Başlangıç noktası |
 | --- | --- |
-| [Terminal](README-terminal.md) | Üç API ailesi, native/metin protokolü, Ctrl+O, arka plan bildirimleri ve devam |
-| [Code Mode](README-code-mode.md) | `code_execute` / `code_start` MCP araçları; JavaScript worker, otomatik onay ve politika/hook motoru |
-| [Güvenlik raporu](SECURITY.md) | Tehdit modeli, testle doğrulanmış garantiler, kalan risk ve OS izolasyonu |
-| [Uyumluluk](CODE-MODE-COMPATIBILITY.md) | Claude Code'un Code Mode davranışlarına göre karşılaştırma ve canlı doğrulama durumu |
-| [Kod incelemesi](README-review.md) | Yerel modele gönderilen git farkı, bağımsız doğrulama istekleri, risk tahmini ([inceleme yönergesi](REVIEW.md)) |
+| Claude Desktop 3P veya başka bir MCP istemcisi | [MCP kurulumu ve API](README-code-mode.md) |
+| Qwen, yerel bir model veya başka bir sağlayıcı ile doğrudan konuşma | [Terminal kurulumu](README-terminal.md) |
+| Git diff incelemesi, rapor ve düzeltme döngüsü | [Kod inceleme kılavuzu](README-review.md) |
+| Claude Code Code Mode ile farklar ve test kanıtları | [Uyumluluk ve doğrulama](CODE-MODE-COMPATIBILITY.md) |
+| QuickJS, Docker ve izin sınırları | [Güvenlik modeli](SECURITY.md) |
 
-## Kurulum (Windows)
+## Hızlı başlangıç
 
-Node.js 24 veya üzeri gereklidir. Kurulum scripti sabit kullanıcı adı, proje
-yolu veya Node dizini kullanmaz; her kullanıcı kendi hesabında çalıştırır:
+Node.js 24 veya üzeri gerekir. Aşağıdaki komutları motorun depo kökünde çalıştırın. Örnekler Windows PowerShell içindir.
 
-```powershell
-.\install-code-mode.ps1
-```
+~~~powershell
+npm.cmd ci
+~~~
 
-MCP kurulumu model endpoint'i gerektirmez; modeli bağlanan uygulama seçer.
-Eski kurulumu scriptle güncelleyin ve istemciyi yeniden başlatın. Terminal
-için önce `npm run code -- --enable --cwd <proje>`, ardından
-`npm run code -- --endpoint <url> --model <model> --cwd <proje>` kullanın.
-Detaylar ve API için [README-code-mode.md](README-code-mode.md);
-güvence ve sınırlar için [SECURITY.md](SECURITY.md).
+### Claude Desktop 3P
 
-## Test
+Windows kurulumunda Linux konteynerleri çalıştıran Docker Desktop kullanabilirsiniz. Komuttaki `-ConfigPath`, MCP kaydının ekleneceği Desktop 3P dosyasını seçer. `$project` değişkenini Code Mode ile açmak istediğiniz proje dizinine ayarlayın.
 
-```powershell
-npm test
-```
+~~~powershell
+$desktopConfig = Join-Path $env:LOCALAPPDATA 'Claude-3p\claude_desktop_config.json'
+$project = 'C:\Projects\uygulama'
+.\install-code-mode.ps1 -ConfigPath $desktopConfig -Isolation docker
+npm.cmd run code -- --config $desktopConfig --enable --cwd $project
+~~~
 
-Gerçek stdio MCP istemcisi/sunucusu, broker onay akışı, hook'lar, transcript
-görüntüleyici, inceleme motoru ve kurulum scripti bütünleşim testleri
-çalıştırılır.
+MCP kaydı eklendikten sonra Desktop'ı tamamen kapatıp açın. Proje tercihi kullanıcı ayarına kaydedilir ve sonraki açılışlarda okunur. Desktop çalışırken etkinleştirme tercihi yeni yürütmelerde de okunur. Model, sohbet sırasında `3p-code-mode` sunucusunun aracını ne zaman çağıracağına karar verir. İlk çağrıyı ve Basalt/Qwen örneğini [MCP kılavuzunda](README-code-mode.md) bulabilirsiniz.
+
+### Bağımsız terminal
+
+~~~powershell
+$project = 'C:\Projects\uygulama'
+npm.cmd run code -- --enable --cwd $project
+npm.cmd run code -- --endpoint http://127.0.0.1:9931/v1 --model 'MODEL_KIMLIGI' --cwd $project --isolation docker
+~~~
+
+`MODEL_KIMLIGI` yerine model sunucusunun sunduğu API kimliğini girin. Terminal OpenAI uyumlu API, Anthropic Messages ve Gemini generateContent bağdaştırıcılarını destekler. Protokol ve sağlayıcı seçenekleri [terminal kılavuzunda](README-terminal.md#model-bağlantısı) açıklanır.
+
+Taze kurulumun izin modu `autoApprove`'dur. Bu modda kullanıcı onayı veya sınıflandırıcı çağrısı yapılmaz. Açık `deny` kuralları ve engelleyici hook'lar uygulanır. Proje etkinleştirmesi, izin modu ve Docker birbirinden bağımsız ayarlardır. [İzin modları](README-code-mode.md#izin-modları)
+
+## Testler
+
+~~~powershell
+npm.cmd test
+npm.cmd run test:isolation:required
+~~~
+
+İlk komut yerel bütünleşim testlerini çalıştırır ve yerel TCP bağlantıları gerektirir. İkinci komut gerçek bir Linux Docker motoru bekler. Canlı modeli ayrı bir komutla test etmek için [doğrulama kılavuzunu](CODE-MODE-COMPATIBILITY.md#testleri-yeniden-çalıştırma) kullanın.
+
+Proje MIT lisanslıdır. [Lisans](LICENSE)
