@@ -60,7 +60,7 @@ server.registerTool('code_execute', {
     if (reviewAfter && !['rules', 'bypassPermissions'].includes(getPermissionMode())) {
       throw new Error('reviewAfter runs outside Code Mode permissions and is unavailable in this permission mode');
     }
-    const job = await startExecution({ cwd, code, timeoutMs, sessionId,
+    const job = await startExecution({ cwd, code, timeoutMs, sessionId, source: 'mcp',
       decide: (kind, event, signal) => decide(kind, event, AbortSignal.any([signal, extra.signal])) });
     const cancel = () => cancelJob(job.id);
     extra.signal.addEventListener('abort', cancel, { once: true });
@@ -86,7 +86,7 @@ server.registerTool('code_start', {
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
 }, async args => {
   try {
-    const job = await startExecution({ ...args, background: true, decide });
+    const job = await startExecution({ ...args, background: true, source: 'mcp', decide });
     return response(getJob(job.id));
   } catch (e) { return jobError(e); }
 });

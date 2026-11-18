@@ -55,6 +55,9 @@ try {
   await writeFile(policyPath, '{}');
   await writeFile(path.join(dir, 'sample.txt'), 'before\n');
   await writeFile(path.join(dir, 'desktop-fixture.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [path.join(process.cwd(), 'test-mcp-fixture.mjs')] }, disabledServer: { command: process.execPath, disabled: true }, '3p-code-mode': { command: process.execPath } } }));
+  const { setProjectEnabled } = await import('./code-mode-settings.mjs');
+  await setProjectEnabled(path.join(dir, 'saved-state'), dir);
+  await setProjectEnabled(path.join(dir, 'saved-state'), os.tmpdir()); // the reviewAfter case runs there
   await client.connect(makeTransport());
   assert.deepEqual((await client.listTools()).tools.map(t => t.name).sort(), ['code_cancel', 'code_execute', 'code_job_delete', 'code_session_delete', 'code_session_resume', 'code_start', 'code_status', 'review_and_fix', 'review_changes']);
   const call = async (code, extra = {}) => {
@@ -292,9 +295,11 @@ try {
     const isolation = JSON.parse(await readFile(path.join(brokerDir, 'isolation.json'), 'utf8'));
     assert.equal(isolation.platform, process.platform);
   }
-  const wrongMode = await client.callTool({ name: 'code_session_resume', arguments: { sessionId: 'test-session' } });
-  assert.equal(wrongMode.isError, true);
-  assert.match(wrongMode.content[0].text, /permission mode rules/);
+  // The same-permission-mode requirement is relaxed: resuming under a
+  // different effective mode succeeds, and the saved mode is plain metadata.
+  const otherMode = await client.callTool({ name: 'code_session_resume', arguments: { sessionId: 'test-session' } });
+  assert.ok(!otherMode.isError, otherMode.content?.[0]?.text);
+  assert.equal(JSON.parse(otherMode.content[0].text).mode, 'rules');
   await client.close();
 
   client = new Client({ name: 'plan-test', version: '1.0.0' });

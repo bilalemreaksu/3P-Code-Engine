@@ -11,6 +11,7 @@ process.env.CODE_MODE_POLICY_PATH=path.join(dir,'policy.json');
 process.env.CODE_MODE_PERMISSION_MODE='auto';
 process.env.CODE_MODE_ISOLATION='off';
 await writeFile(process.env.CODE_MODE_POLICY_PATH,'{}');
+await import('./code-mode-settings.mjs').then(m => m.setProjectEnabled(process.env.CODE_MODE_DATA_DIR, dir));
 let classifications=0, action='write', modelCalls=0;
 const server=createServer(async(req,res)=>{
   try {
@@ -29,7 +30,7 @@ const server=createServer(async(req,res)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const endpoint=`http://127.0.0.1:${server.address().port}/v1`;
 process.env.CODE_MODE_CLASSIFIER_ENDPOINT=endpoint;process.env.CODE_MODE_CLASSIFIER_MODEL='fixture';
-const {CodeModeAgent}=await import('./code-mode-agent.mjs');
+const {CodeModeAgent,cyclePermissionMode}=await import('./code-mode-agent.mjs');
 const agent=new CodeModeAgent({endpoint,model:'fixture',cwd:dir});
 let resumed;
 try {
@@ -51,16 +52,67 @@ try {
   action='background';await resumed.turn('Start background work');
   const id=resumed.jobs.at(-1);assert.ok(resumed.backgroundJobs.has(id));
   assert.equal(resumed.snapshot().at(-1).status,'running');
+  assert.equal(resumed.snapshot().at(-1).source,'user','jobs started in a real user turn carry that source');
   action='illegal';await resumed.turn('Can keep talking while it runs');
   assert.equal(resumed.active,false);
   await Promise.all([...resumed.pending]);
-  await resumed.turn('Background code completed',undefined,{backgroundJobId:id});
+  // Background completion is a synthetic poll_event, never a user message.
+  await resumed.turn('Background code completed',undefined,{backgroundJobId:id,source:'poll_event'});
+  await assert.rejects(resumed.turn('nope',undefined,{source:'bogus'}),/Invalid turn source/);
   assert.ok((await CodeModeAgent.resume(resumed.id,{endpoint,model:'fixture'})).deliveredBackground.has(id));
   await assert.rejects(resumed.execute('code_status',{jobId:'unowned'}),/does not belong/);
   await assert.rejects(resumed.execute('REPL',{code:'1',cwd:'C:/'}),/Unknown REPL argument/);
+  // The env variable no longer pins a resumed session: the session carries
+  // its own mode. An explicit --permission-mode is a trusted choice that
+  // moves the session, not a mismatch error.
   process.env.CODE_MODE_PERMISSION_MODE='default';
-  await assert.rejects(CodeModeAgent.resume(agent.id,{endpoint,model:'fixture'}),/permission mode auto/);
+  const envFree=await CodeModeAgent.resume(agent.id,{endpoint,model:'fixture'});
+  assert.equal(envFree.mode,'auto');
+  await envFree.close();
+  const moved=await CodeModeAgent.resume(agent.id,{endpoint,model:'fixture',permissionMode:'plan'});
+  assert.equal(moved.mode,'plan','explicit --permission-mode moves the session');
+  await moved.close();
   process.env.CODE_MODE_PERMISSION_MODE='auto';
+  // Initial mode, current mode and background eligibility are tracked apart.
+  assert.equal(resumed.initialMode,'auto');
+  assert.equal(resumed.backgroundEligible,true);
+  resumed.setMode('plan');
+  assert.equal(resumed.mode,'plan');
+  assert.equal(resumed.backgroundEligible,false);
+  await assert.rejects(resumed.execute('REPL',{code:'return 1',background:true}),/Background code requires rules, auto or bypassPermissions mode/);
+  resumed.setMode('auto');
+  assert.equal(resumed.backgroundEligible,true);
+  assert.throws(()=>resumed.setMode('yolo'),/Invalid permission mode/);
+  assert.equal(cyclePermissionMode('plan'),'auto');
+  assert.equal(cyclePermissionMode('bypassPermissions'),'rules');
+  // No model-callable tool can change the permission mode.
+  await assert.rejects(resumed.execute('set_permission_mode',{mode:'bypassPermissions'}),/Unavailable tool/);
+  // A transient lock on the session file must not lose the save: the atomic
+  // rename retries briefly (on Windows this is the observed EPERM -4048).
+  {
+    const { chmodSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const target = path.join(process.env.CODE_MODE_DATA_DIR, `chat-${createHash('sha256').update(resumed.id).digest('hex')}.json`);
+    const released = setTimeout(() => chmodSync(target, 0o600), 800);
+    chmodSync(target, 0o444);
+    try { await resumed.save(); }
+    finally { clearTimeout(released); try { chmodSync(target, 0o600); } catch {} }
+    assert.ok((await readFile(target, 'utf8')).includes('"codeMode":true'));
+  }
+  // A process that deletes the save's temp file (observed on Windows: the
+  // rename hit ENOENT -4058) must not lose the conversation: each retry uses
+  // a fresh temp within the bounded budget, and the last attempt lands after
+  // the killer stops.
+  {
+    const { spawn } = await import('node:child_process');
+    const killer = spawn(process.execPath, ['-e', `const {readdirSync,unlinkSync}=require('node:fs');const p=require('node:path');const d=process.argv[1];const end=Date.now()+1500;while(Date.now()<end){try{for(const n of readdirSync(d))if(n.startsWith('chat-')&&n.endsWith('.tmp'))unlinkSync(p.join(d,n));}catch{}}`, process.env.CODE_MODE_DATA_DIR], { stdio: 'ignore' });
+    killer.unref();
+    try { await resumed.save(); }
+    finally { killer.kill(); }
+    const { createHash } = await import('node:crypto');
+    const saved = await readFile(path.join(process.env.CODE_MODE_DATA_DIR, `chat-${createHash('sha256').update(resumed.id).digest('hex')}.json`), 'utf8');
+    assert.ok(saved.includes('"codeMode":true'));
+  }
   const env={};const options=await terminalOptions(['--endpoint',endpoint,'--model','fixture','--cwd',dir],env);
   assert.equal(env.CODE_MODE_PERMISSION_MODE,'auto');assert.equal(env.CODE_MODE_CLASSIFIER_ENDPOINT,endpoint);
   // Exercise the real terminal stream: Ctrl+O, expand a Code row, return,
@@ -75,6 +127,25 @@ try {
     output.on('data',check);check();
   });
   input.emit('keypress','',{ctrl:true,name:'o'});input.emit('keypress','',{name:'return'});input.emit('keypress','',{ctrl:true,name:'o'});
+  // Shift+Tab and an explicit /mode command change the session mode live.
+  const untilRendered=async text=>{const deadline=Date.now()+5000;while(Date.now()<deadline){if(rendered.includes(text))return;await new Promise(r=>setTimeout(r,50));}throw new Error(`Terminal never rendered: ${text}`);};
+  input.emit('keypress','',{name:'tab',shift:true});
+  await untilRendered('İzin modu: auto → bypassPermissions');
+  input.emit('keypress','/mode plan');input.emit('keypress','',{name:'return'});
+  await untilRendered('İzin modu: bypassPermissions → plan');
+  // A background save that stays blocked past its retry budget (the session
+  // file stuck read-only) must surface as a visible error — never crash the
+  // interactive terminal with an unhandled rejection.
+  {
+    const { chmodSync } = await import('node:fs');
+    const { createHash } = await import('node:crypto');
+    const target = path.join(process.env.CODE_MODE_DATA_DIR, `chat-${createHash('sha256').update(agent.id).digest('hex')}.json`);
+    chmodSync(target, 0o444);
+    try {
+      input.emit('keypress','',{name:'tab',shift:true}); // setMode → fire-and-forget save
+      await untilRendered('Oturum kaydedilemedi');
+    } finally { chmodSync(target, 0o600); }
+  }
   input.emit('keypress','/exit',{});input.emit('keypress','',{name:'return'});
   await ui;
   assert.equal(input.isRaw,false);assert.equal(input.listenerCount('keypress'),0);

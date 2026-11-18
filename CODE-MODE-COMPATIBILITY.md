@@ -39,9 +39,15 @@ değildir. Eski Desktop raporu yeni sürümün UI kanıtı değildir.
 | Ön plan / arka plan süreleri | Varsayılan ve üst sınır 10 dakika / 2 saat |
 | Arka planda konuşmaya devam | Desktop'ta code_start/status; terminalde REPL background:true ve tamamlanınca modele poll_event |
 | Oturumu devam ettirme | JSON `state`, cwd ve izin modu diskte tutulur; normal JS değişkenleri tutulmaz |
+| Oturum izin modu | Eskiden: `CODE_MODE_PERMISSION_MODE` oturumu başlangıçta sabitlerdi ve yüzeyler saklanan modla sıkı eşleşme isterdi | Etkinlik ayrı bir güvenilen kullanıcı ayarıdır (aşağıda). Terminal oturumu modu diskte taşır; başlangıç ortam değişkeni devam eden oturumu sabitlemez, saklanan modla uyuşmayan ortam açık hata değildir — devam edilir ve oturum bitişte yürüdüğü modu yeniden yazar. Açık `--permission-mode` (terminal resume) veya `/mode` güvendirilen bir insan tercihi olarak modu taşar, hata değildir. Mod çalışma anında yalnızca terminalde Shift+Tab veya `/mode <mod>` ile değişir; arka plan uygunluğu (`rules`/`auto`/`bypassPermissions`) modla birlikte yeniden hesaplanır. Modelin modu değiştirecek aracı yoktur |
+| Proje etkinleştirme kapısı | Claude Code'ta proje başına böyle bir etkinleştirme kapısı yoktur; hesap/model uygunluğu ürünün kendi kapılarıdır | Code Mode'un projede etkin olması, izin modundan ayrı bir güvenilen kullanıcı ayarıdır (veri dizinindeki `settings.json`, terminal `--enable`/`--disable`). Proje dizinindeki dosya özelliği kendiliğinden açamaz; dosya yoksa her yerde kapalı (fail-closed), bozuksa gerekçesiyle açık hata. Kapatılmış/bozuk durumda yürütme ve resume `Code Mode is not enabled for <dizin>` gerekçesiyle reddedilir. Anthropic hesap/model kontrolleri taklit edilmez |
+| Resume işaret doğrulaması | Claude Code'un kendi oturum yönetimi | Terminal resume, Code Mode işaretini doğrular: dosya yoksa, bozuk JSON, işaret yoksa (`codeMode` alanı) veya sürüm desteklenmiyorsa her biri ayrı gerekçesiyle açık hata verir; kapalı proje devam edemez |
+| Olay kaynağı ayrımı | — | Her iş `source` kaydeder: `user` (terminalde gerçek kullanıcı mesajı), `poll_event` (sentetik arka plan tamamlanma turu), `mcp` (Desktop yüzeyi). Desktop gerçek kullanıcı olayını bildiremediğinden bu, iş kaydı ve belgede açıktır |
+| Süresi dolan onayın yeniden kurulması | Süre sonunda otomatik ret | Yeni bir yürütme artık yeniden kurmaz (eski küresel sıfırlama kaldırıldı). Yalnızca gerçek kullanıcı mesajı, o oturumun işlerindeki süresi dolmuş onay durumunu yeniden kurar; `poll_event` ve modelin başlattığı kod yeniden kurmaz. MCP yüzeyinde süresi dolan onay iş bitene kadar ret olarak kalır |
 | Transcript ve düzenleme önizlemesi | MCP metin blokları; yeni terminalde aynı konuşmada Ctrl+O ve daraltılmış Code satırları |
 | Claude Code Ctrl+O konuşma arayüzü | Desktop'ın kendi UI'ı değişmez; bu projenin terminali aynı oturumda karşılığını sağlar |
 | Yerleşik araç izinleri / OS sandbox | QuickJS doğrudan Node erişimini kapatır; izin verilen kabuk için Docker ek OS sınırıdır ([SECURITY.md](SECURITY.md)) |
+| Yürütme hata yolları | Gözlenmemiş bir yardımcı reddi, fırlatan zamanlayıcı geri çağırması, bekleyen iş içinde bellek sınırı aşımı (64 MiB) veya seriye dökülemez sonuç (BigInt, döngüsel) "başarılı" sonucu bastırmaz: yürütme açık gerekçesiyle reddedilir. `timeoutMs`, bir yardımcıda bekleyip atıl durumdaki yürütmeyi de "süre aştı" ile durdurur; bağlam kapatıldıktan sonra sonuçlanan bekleyen işlemler sessizce yok sayılır, asılı süreç veya unhandled rejection bırakılmaz |
 | Anthropic hesabı, native build, özellik bayrağı ve sürüm kapıları | Claude Code'a özgü; bu bağımsız sunucuya uygulanmaz |
 | Remote Control, Chrome, computer use, agent teams ve uygulamalar arası oturum taşıma | Claude Code'a ait entegrasyonlar bu projede bulunmaz |
 
@@ -103,6 +109,43 @@ Hook sözleşmesinde kalan farklar (native hook referansına göre):
 | `REPL` girdisini `updatedInput` ile değiştirme | Native'te böyle bir araç yoktur | Açık hata: hook yürütülen kodu değiştiremez | Açık hata |
 | `if`/`async`/`shell`/`statusMessage`/`once`/`allowedEnvVars` alanları, `prompt`/`agent` türleri | Native'de desteklenir | Açık hatayla reddedilir; sessizce yok sayılmaz | Açık hata |
 
+## İzlenebilir uyumluluk matrisi
+
+Her satır bir gereksinimi kaynağına, uygulama noktasına, onu doğrulayan
+testine ve sonucuna bağlar. **PASS yalnızca atıf yapılan testin o davranışı
+gerçekten doğruladığı (davranış veya dosya etkisiyle) satırlara verilir**;
+doğrulanmamış, koşullu veya çalıştırılmamış satır PASS sayılmaz.
+
+| Gereksinim | Kaynak | Uygulama noktası | Test | Sonuç |
+| --- | --- | --- | --- | --- |
+| Sıralı/paralel araç çağrısı (`Promise.all`) | v0.12 tablosu | `code-mode-runtime.mjs` (QuickJS) | `test-code-mode-runtime.mjs` (eşzamanlılık zirve sayacı `peak === 2`) | PASS — eşzamanlılık ölçülür, iki kayıt yeterli sayılmaz |
+| Son ifade (ASI, template, yorumlar) | v0.12 tablosu | runtime AST tamamlama | `test-code-mode-runtime.mjs` | PASS |
+| Node.js/`process`/`fetch`/import kaçış izolasyonu | v0.12 tablosu | QuickJS WASM kapsamı | `test-code-mode-runtime.mjs` | PASS |
+| CPU sınırı ve bellek tavanı (64 MiB) | v0.12 tablosu | runtime sınırları | `test-code-mode-runtime.mjs` (`while(true)` ret), `test-code-mode-runtime-errors.mjs` (OOM) | PASS |
+| Yürütme hata yolları (yardımcı reddi, zamanlayıcı, serileştirme, süre aşımı) | v0.12 tablosu | `code-mode-worker.mjs` | `test-code-mode-runtime-errors.mjs` | PASS |
+| Kural matrisi: `deny`/`ask`/`allow` önceliği, salt-okunur küme, yol desenleri | v0.12 tablosu + izin şeması | `code-mode-rules.mjs` | `test-code-mode-rules.mjs` | PASS |
+| Hook kararları, hata/zaman aşımı, `onFailure` (command/HTTP/MCP) | v0.12 tablosu | `code-mode-hooks.mjs` | `test-code-mode-hooks.mjs` | PASS |
+| `updatedInput`/`additionalContext`, `policy.hooks` adaptörü, `allow` önceliği | v0.12 tablosu | `code-mode-policy.mjs` | `test-code-mode-hooks.mjs`, `test-code-mode-rules.mjs`, `test-code-mode.mjs` | PASS |
+| `UserPromptSubmit` çıktı engelleme (arka plan işi) | v0.12 tablosu | `code-mode-worker.mjs` (`holdOutput` → `check.output`) | `test-code-mode-hooks.mjs` (block sözleşmesi), `test-code-mode.mjs`, `test-terminal-flow.mjs` (canary hook'a ulaşır; terminale ve modele ulaşmaz) | PASS |
+| Auto: kod bloğu başına tek sınıflandırma; hata/bozuk yanıtta fail-closed | v0.12 tablosu | `code-mode-classifier.mjs` | `test-code-mode.mjs`, `test-code-mode-agent.mjs`, `test-classifier-eval.mjs` (çevrimdışı: bozuk yanıtlar, süre, karışık blok) | PASS (çevrimdışı); canlı endpoint katmanı koşulmadı (bu ortamda kimlik bilgisi yok) |
+| Güvenilen kullanıcı niyeti yalnızca terminalin gerçek kullanıcı turunda | Görev 6 gereksinimi | `classifyCode(…, userIntent)`; ajan yalnızca `user` turunda geçirir | `test-classifier-eval.mjs` (O10–O12) | PASS (çevrimdışı); canlı katman (L16–L18) koşulmadı |
+| Eski auto onayının yeni kodla kaybı | v0.12 tablosu | `execution-manager.mjs` (`autoEpoch`/`reviewValid`) | `test-execution-manager.mjs`, `test-code-mode.mjs` | PASS |
+| Onay geri sayımı, broker UI (köken doğrulaması), tek kullanımlık nonce, hash zincirli denetim, süre/iptal, yeniden başlatma | v0.12 tablosu | `approval-broker.mjs`, `approval-client.mjs` | `test-approval.mjs` | PASS |
+| Model kendi onayını veremez | v0.12 tablosu | ajan araç listesi; QuickJS brokere erişemez | `test-code-mode.mjs` (nonce modele ulaşmaz; tüketilen nonce → 409), `test-code-mode-host.mjs` (sahte izin) | PASS |
+| Terminal: girdi → model → REPL → auto → gerçek dosya → yanıt | v0.12 tablosu (terminal) | `code-mode-cli.mjs`, `code-mode-agent.mjs` | `test-code-mode-agent.mjs` (ajan düzeyi), `test-terminal-flow.mjs` (tuş girdisi + dosya etkisi) | PASS |
+| Arka plan sonucu → terminal satırı + model `poll_event` | v0.12 tablosu | terminal 500 ms sayacı, `agent.turn(source:'poll_event')` | `test-code-mode-agent.mjs`, `test-terminal-flow.mjs` | PASS |
+| Ctrl+O transcript aynı konuşmada | v0.12 tablosu | `code-mode-transcript.mjs` | `test-code-mode-agent.mjs`, `test-terminal-flow.mjs` | PASS |
+| Terminal onay reddi brokerin yerel arayüzüyle (model çağrısıyla değil) | Görev 7 gereksinimi | `code-mode-cli.mjs` onay satırı; broker `POST /decisions` (köken doğrululu) | `test-terminal-flow.mjs` (`GET /pending` → deny; dosya etkisi yok; denetimde `decision: deny`) | PASS |
+| Yeniden başlatma (`--resume`) ve konuşma sürekliliği | v0.12 tablosu | `CodeModeAgent.resume` | `test-code-mode-agent.mjs` (işaret, kesinti), `test-terminal-flow.mjs` (/exit sonrası yeni TTY; eski konuşma model isteklerinde) | PASS |
+| Olay kaynağı ayrımı (`user`/`poll_event`/`mcp`) | v0.12 tablosu | `execution-manager.mjs` (`job.source`) | `test-execution-manager.mjs`, `test-classifier-eval.mjs` | PASS |
+| Süresi dolan onay yalnızca gerçek kullanıcı mesajıyla yeniden kurulur | v0.12 tablosu | `resetApprovalTimeouts` (yalnızca `user` turu) | `test-execution-manager.mjs` | PASS |
+| Oturum izin modu + arka plan uygunluğu | v0.12 tablosu | `code-mode-agent.mjs` (`setMode`, `backgroundModes`) | `test-execution-manager.mjs`, `test-code-mode-agent.mjs` | PASS |
+| Proje etkinleştirme kapısı: güvenilen ayar, fail-closed | v0.12 tablosu | `code-mode-settings.mjs` | `test-code-mode-settings.mjs` | PASS |
+| Canlı terminal örneği "iki paralel okuma" | eski canlı araç | — | `test-code-mode-agent-live.mjs` | **Paralellik kanıtı değil** — yalnızca iki işlem kaydı; paralellik kanıtı ilk satırda; canlı katman koşulmadı |
+| Docker OS izolasyonu (zorunlu) | v0.12 tablosu | `execution-manager.mjs` (konteyner motoru) | `test-code-mode-isolation.mjs --require-docker` (motor/build yok → FAIL); CI `docker-isolation` işi | PASS — bu makinede motor (29.9.3) mevcut, `npm run test:isolation:required` koştu; CI işinde motor/build yokluğu SKIP değil hatadır |
+| Windows + Linux runtime/agent CI kapsamı | Görev 7 gereksinimi | `.github/workflows/ci.yml` (test matrisi: `windows-latest`, `ubuntu-latest`) | `npm test` her iki OS'te | Değişiklik yapıldı; Linux koşusu yalnızca CI'da (bu makinede doğrulanmadı) |
+| Desktop UI (Claude Desktop 3P yüzeyi) | v0.12 tablosu (Desktop satırı) | bu sürümde yeni UI kodu yok | yeni doğrulama yapılmadı | **Doğrulanmadı** — 18 Kasım 2026 raporu tarihsel kayıttır (aşağıda), mevcut sürümün kanıtı değildir |
+
 ## Doğrulama
 
 Kural–araç–girdi–beklenen karar matrisi (`test-code-mode-rules.mjs`),
@@ -118,7 +161,8 @@ Docker köprüsünde ham RPC ile izin atlama, MCP deny/ask/hook,
 host'ta çıktı süzme ve iptal davranışları test edilir. İmajın SHA-256 etiketi
 tüm build girdilerini kapsar; her girdi değişikliğinin etiketi değiştirdiği
 ayrıca doğrulanır. CI'da ayrı Linux Docker işi `--require-docker` kullanır;
-motor/build yokluğu bu işte SKIP değil hatadır.
+motor/build yokluğu bu işte SKIP değil hatadır. Ana test işi artık hem
+Windows hem Linux'ta koşar (matrix: `windows-latest`, `ubuntu-latest`).
 
 Hook çıktı sözleşmesi için de test eklendi: `updatedInput`/`additionalContext`
 ile `allow`/`ask`/`deny` karar önceliği (command, HTTP ve MCP hook biçimleri),
@@ -128,11 +172,24 @@ reddi) ve girdi değişikliğinin `auto`/`plan`/`default` modlarındaki etkileri
 `test-code-mode-hooks.mjs`, `test-code-mode-rules.mjs`,
 `test-code-mode-host.mjs` ve uçtan uca `test-code-mode.mjs` ile test edilir.
 
-Gerçek model auto doğrulaması: `npm run test:auto:live -- --endpoint <url>
---model <model>` (tek satır). Sonuç `live-verification/auto-report.json`'dadır;
-zararsız yazmaya izin ve sentetik kimlik bilgisi çıkarmaya ret, gerçek MCP
-sunucusu ve Docker üzerinden doğrulanır. Bu sınırlı örnekler bir genel model
-güvenliği iddiası değildir. Aşağıdaki Desktop raporu v0.11 öncesindeki canlı
+Gerçek model auto doğrulaması: `npm run test:classifier:eval -- --endpoint <url>
+--model <model>` (tek satır; eski `test:auto:live` adı kalır). `--offline`
+katmanı `npm test` içinde çalışır: mock classifier, bozuk yanıtlarda
+fail-closed (JSON dışı, boş, HTTP 500, bağlantı kopması, yanıtsız endpointte
+`CODE_MODE_CLASSIFIER_TIMEOUT_MS` ile süre sınırı), kod bloğu başına tam blokla
+tek inceleme (ret gelince karışık blokta zararsız yarı bile çalışmaz),
+çalıştırılmayan kodun etkisizliği (dosya etkisi ve kayıtlı işlem yok) ve
+güvenilen kullanıcı niyet alanını doğrular — niyet yalnızca terminalin gerçek
+kullanıcı turunda taşınır; `poll_event` turları ve MCP yüzeyi taşımaz, kod
+yorumları bu alanı dolduramaz. Canlı katman gerçek MCP sunucusunda (ve Docker
+köprüsünde) senaryo ailesi koşar: normal proje işleri, hesaplanan yollar,
+dölaylı shell işlemleri, onay atlama girişimleri, kod yorumuyla yetki iddiası,
+niyet etkileşimi; yalnızca sentetik dosya ve sırlar kullanılır. Sonuç
+`live-verification/classifier-eval-report.json`'dadır: yanlış izin / yanlış ret
+sayıları, reddedilen kodun etkisizlik kanıtı, model kimliği (istenen model ve
+isteklerde giden `model` alanı) ve kaynak hash'leri (classifier, policy,
+runtime, paket). Bu bir model değerlendirmesidir; genel güvenlik iddiası
+değildir. Aşağıdaki Desktop raporu v0.11 öncesindeki canlı
 denemenin kaydıdır; yeni testler onun yerine Desktop UI testi sayılmaz.
 
 `npm test`: gerçek stdio MCP istemcisi/sunucusu, kontrollü yerel sınıflandırıcı,
@@ -144,23 +201,51 @@ arka plan işinde sonuç ve olayların engellenmesi, state'in kaydedilmemesi,
 eşzamanlı auto işlerindeki onay ve süre aşımı dosya etkileriyle kontrol edilir.
 Terminal görünümü gerçek stream/key olaylarıyla açılır, Ctrl+O ve Enter
 kontrolleri çalıştırılır; kapanışta raw mode ve dinleyiciler temizlenir.
+Uçtan uca terminal akışı ayrıca `test-terminal-flow.mjs` ile test edilir:
+girdi → model → REPL → auto sınıflandırma → gerçek dosya etkisi → yanıt,
+arka plan sonucu ve `poll_event`, Ctrl+O, onay reddi — karar brokerin
+yerel HTTP arayüzünden (`GET /pending`, köken doğrulamalı `POST /decisions`),
+model çağrısıyla değil —, `UserPromptSubmit` çıktı engelleme (canary hook'a
+ulaşır, terminale ve modele ulaşmaz) ve `--resume` ile taze TTY'de yeniden
+başlatma + konuşma sürekliliği.
+Proje etkinleştirme — güvenilen kullanıcı ayarı, fail-closed bozuk dosya,
+proje dosyasının kendiliğinden açamaması, kapalı/bozuk durumda gerekçeli
+yürütme ve resume redleri, mod kaydı olarak devam — `test-code-mode-settings.mjs`
+ile test edilir.
 
-Canlı Desktop doğrulaması 18 Kasım 2026'da gerçek Claude Desktop 3P
-yüzeyinde **tamamlandı ve tüm kontroller geçti**
-(`live-verification/report.json`, `passed: true`): yürütme, oturum devamı,
-arka plan ilerlemesi, ret etkisizliği, tutulan çıktı, iptal, denetim zinciri
-ve — broker onayıyla — `interactiveApproval`. Eski sürümdeki tek kalan
-hata, istemci form onayı (`elicitation.form`) beklentisinden kaynaklanıyordu;
+Yürütme hata yolları — gözlenmemiş yardımcı reddi, zamanlayıcı hatası,
+serileştirilemeyen sonuç, bellek sınırı aşımı ve bekleyen yardımcı sırasında
+süre aşımı — ayrı süreçlerde `test-code-mode-runtime-errors.mjs` ile test
+edilir: her senaryo kendi `node` sürecinde koşar, çünkü eski davranış ya
+süreci çökertiyor (unhandled rejection) ya asılı kalıyordu; 8 saniyede
+bitmeyen senaryo iptal edilir ve başarısız sayılır.
+
+## Tarihsel Desktop doğrulaması (18 Kasım 2026) — mevcut sürümün kanıtı değil
+
+18 Kasım 2026'da gerçek Claude Desktop 3P yüzeyinde **tamamlanan** canlı
+doğrulama tüm kontrolleri geçmiş olarak
+(`live-verification/report.json`, `passed: true`) **o anki sürüm için**
+kayıt altına alındı: yürütme, oturum devamı, arka plan ilerlemesi, ret
+etkisizliği, tutulan çıktı, iptal, denetim zinciri ve — broker onayıyla —
+`interactiveApproval`. Eski sürümdeki tek kalan hata, istemci form onayı
+(`elicitation.form`) beklentisinden kaynaklanıyordu;
 `client-capabilities.jsonl` logu canlı istemcinin (`claude-ai` ve
 `local-agent-mode-3p-code-mode`) `elicitation` bildirmediğini
-kanıtlıyor. Onay artık yerel onay brokerinin web arayüzünde veriliyor:
-denetim kaydında karar `channel: 'ui'` ve brokerca doğrulanmış
+kanıtlıyor. Onay o doğrulamada yerel onay brokerinin web arayüzünde
+verildi: denetim kaydında karar `channel: 'ui'` ve brokerca doğrulanmış
 `fromUi: true` ile görüldü. `verify-results.mjs` yalnızca dosya varlığına
 değil, brokerin hash zincirli `approvals.jsonl` kaydına bakar
 (`jobId`/işlem/dosya eşleşmesi, işin ömrü içinde karar, `channel: 'ui'`,
 `fromUi: true`, nonce'un tek tüketimi).
 
-Gelecek sürüm/istemci değişikliklerinde yeniden doğrulama (aynı adımlar):
+Bu rapor bir **tarihsel kayıttır**: o zamandan bu yana QuickJS WASM
+runtime'ı, terminal model döngüsü, broker tabanlı onay ve proje
+etkinleştirme kapısı değiştiğinden Desktop UI yeniden doğrulanmadı. Rapor
+mevcut sürümün kanıtı olarak sunulamaz; izlenebilir matriste Desktop UI
+satırı "Doğrulanmadı" olarak tutulur. Aşağıdaki adımlar yeni bir sürümde
+yeniden doğrulama işlemidir:
+
+Yeniden doğrulama işlemi:
 
 1. `install-code-mode.ps1 -ConfigPath <mevcut-config>` ile kurun, uygulamayı
    yeniden başlatın ve `3p-code-mode` bağlantısını kontrol edin.

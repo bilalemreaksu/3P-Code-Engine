@@ -6,10 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
-import { getPermissionMode, policyCheck } from './code-mode-policy.mjs';
+import { getPermissionMode, permissionModes, backgroundModes, policyCheck } from './code-mode-policy.mjs';
 import { approvalTimeoutMs, cancelDecision, createApprovalRequest, waitForDecision } from './approval-client.mjs';
 import { createHostBridge } from './code-mode-host.mjs';
 import { workerImageTag } from './worker-image.mjs';
+import { assertProjectEnabled, loadSettingsSync } from './code-mode-settings.mjs';
 
 const worker = fileURLToPath(new URL('./code-mode-worker.mjs', import.meta.url));
 const engineDir = path.dirname(fileURLToPath(import.meta.url));
@@ -131,7 +132,7 @@ function approvalFields(event) {
 // observe pendingApprovals through code_status but cannot grant the
 // approval: no MCP tool carries the nonce or a decision endpoint.
 function queueApproval(job, event, signal) {
-  if (job.approvalTimedOut) return Promise.reject(new Error('Approval countdown expired; start new code before requesting approval again'));
+  if (job.approvalTimedOut) return Promise.reject(new Error('Approval countdown expired; in the terminal a real user message re-arms approvals, otherwise start a new job'));
   return new Promise((resolve, reject) => {
     const id = randomUUID();
     const deadline = new Date(Date.now() + approvalTimeoutMs()).toISOString();
@@ -145,7 +146,7 @@ function queueApproval(job, event, signal) {
       if (error) reject(error); else resolve();
     };
     // Safeguard: even if the broker poll wedges, the deadline bounds the wait.
-    const safeguard = setTimeout(() => { job.approvalTimedOut = true; finish(new Error(`Approval countdown expired for ${event.tool_name}; start new code before requesting approval again`)); }, approvalTimeoutMs() + 5000);
+    const safeguard = setTimeout(() => { job.approvalTimedOut = true; finish(new Error(`Approval countdown expired for ${event.tool_name}; in the terminal a real user message re-arms approvals, otherwise start a new job`)); }, approvalTimeoutMs() + 5000);
     safeguard.unref?.();
     const aborted = () => {
       if (permission.nonce) void cancelDecision(dataDir, permission.nonce, 'job cancelled').catch(() => {});
@@ -175,8 +176,19 @@ function filename(kind, id) { return path.join(dataDir, `${kind}-${createHash('s
 function save(kind, id, value) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const target = filename(kind, id), temp = `${target}.${randomUUID()}.tmp`;
-  try { writeFileSync(temp, JSON.stringify({ version: kind === 'session' ? 2 : 1, id, value }), { encoding: 'utf8', mode: 0o600 }); renameSync(temp, target); }
-  finally { rmSync(temp, { force: true }); }
+  try {
+    writeFileSync(temp, JSON.stringify({ version: kind === 'session' ? 2 : 1, id, value }), { encoding: 'utf8', mode: 0o600 });
+    // A rename can hit EPERM while the target is transiently locked (observed
+    // on Windows); retry briefly instead of losing the record. The stall is
+    // synchronous but bounded and only happens on the error path.
+    for (let delay = 150; ; delay *= 2) {
+      try { renameSync(temp, target); break; }
+      catch (error) {
+        if (!['EPERM','EACCES','EBUSY'].includes(error.code) || delay > 1200) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      }
+    }
+  } finally { rmSync(temp, { force: true }); }
 }
 function load(kind, id) {
   try {
@@ -218,26 +230,52 @@ function getSession(id) {
   return sessions.get(id) || load('session', id);
 }
 
+// The saved permission mode is metadata, not a gate: continuing a session
+// under a different effective mode is allowed on every surface (a trusted
+// explicit choice may move the mode; the session re-records the mode it
+// runs with when the execution finishes). The project enablement check
+// still applies.
 export function resumeSession(id) {
   const saved = getSession(id);
   if (!saved) throw new Error('Unknown Code Mode session');
-  if (saved.mode && saved.mode !== getPermissionMode()) throw new Error(`Resume this session with permission mode ${saved.mode}`);
+  if (saved.cwd) assertProjectEnabled(dataDir, saved.cwd);
   const { state, ...metadata } = saved;
   return { sessionId: id, ...metadata, running: busy.has(id) };
 }
 
-export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, background = false }) {
+// A real user message re-arms timed-out approval state for that session's
+// jobs. Only the terminal surface can identify real user events; the
+// MCP/Desktop surface cannot tell them apart from model tool calls, so it
+// must never call this — its executions run with source 'mcp' and re-arm
+// nothing, and a timed-out approval there stays dead until the job ends.
+export function resetApprovalTimeouts(jobIds) {
+  for (const id of jobIds ?? []) {
+    const job = jobs.get(id);
+    if (job?.approvalTimedOut) job.approvalTimedOut = false;
+  }
+}
+
+// source records who started this execution so the engine can tell events
+// apart: 'user' = the terminal's real user message, 'poll_event' = the
+// synthetic background-completion turn, 'mcp' = the Desktop/MCP surface,
+// which cannot distinguish real user events from model tool calls.
+export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, background = false, mode, source }) {
   timeoutMs ??= background ? 7200000 : 600000;
-  const mode = getPermissionMode();
+  if (mode !== undefined && !permissionModes.includes(mode)) throw new Error(`Invalid permission mode: ${String(mode)}`);
+  if (source !== undefined && !['user', 'poll_event', 'mcp'].includes(source)) throw new Error(`Invalid execution source: ${String(source)}`);
+  mode = mode ?? getPermissionMode();
+  source = source ?? 'mcp';
   if (typeof code !== 'string' || !code.trim() || code.length > 65536) throw new Error('code must be 1..65536 characters');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > (background ? 7200000 : 600000)) throw new Error('Invalid execution timeout');
-  if (background && !['rules', 'auto', 'bypassPermissions'].includes(mode)) throw new Error('Background code requires rules, auto or bypassPermissions mode');
+  if (background && !backgroundModes.includes(mode)) throw new Error('Background code requires rules, auto or bypassPermissions mode');
   approvalTimeoutMs();
   const saved = sessionId ? getSession(sessionId) : undefined;
-  if (saved?.mode && saved.mode !== mode) throw new Error(`Resume this session with permission mode ${saved.mode}`);
   cwd ??= saved?.cwd;
   if (!cwd || !path.isAbsolute(cwd)) throw new Error('cwd must be an absolute path for a new session');
   cwd = path.normalize(cwd);
+  // Initial state check: Code Mode runs only for projects the user enabled
+  // in the trusted user settings; a corrupted settings file fails closed.
+  assertProjectEnabled(dataDir, cwd);
   if (saved?.cwd && saved.cwd !== cwd) throw new Error('Session belongs to a different working directory');
   if (jobs.size >= 100) {
     for (const [id, job] of jobs) if (job.status !== 'running') { jobs.delete(id); if (jobs.size < 100) break; }
@@ -268,9 +306,8 @@ export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, 
     throw error;
   }
   const id = randomUUID();
-  for (const active of jobs.values()) active.approvalTimedOut = false;
-  const job = { id, mode, background, cwd, status: 'running', startedAt: new Date().toISOString(), child, container, isolated, events: [], nextSequence: 1, permissions: new Map(), reviewValid: false };
-  try { save('job', id, { id, status: 'interrupted', startedAt: job.startedAt, events: [], nextSequence: 1, result: { ok: false, error: 'Server stopped while this job was running; completion is unknown.' } }); }
+  const job = { id, mode, source, background, cwd, status: 'running', startedAt: new Date().toISOString(), child, container, isolated, events: [], nextSequence: 1, permissions: new Map(), reviewValid: false };
+  try { save('job', id, { id, status: 'interrupted', startedAt: job.startedAt, source: job.source, events: [], nextSequence: 1, result: { ok: false, error: 'Server stopped while this job was running; completion is unknown.' } }); }
   catch (e) { terminate(child, container); if (sessionId) busy.delete(sessionId); throw new Error(`Cannot persist job: ${e.message}`); }
   jobs.set(id, job);
   job.promise = new Promise(resolve => {
@@ -390,7 +427,9 @@ export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, 
 export function getJob(id, afterSequence = 0) {
   const job = jobs.get(id) || load('job', id); if (!job) throw new Error('Unknown job');
   const firstSequence = job.events[0]?.sequence ?? job.nextSequence;
-  return { id: job.id, status: job.status, startedAt: job.startedAt, events: job.events.filter(event => event.sequence > afterSequence), nextSequence: job.nextSequence, eventsDropped: afterSequence < firstSequence - 1,
+  return { id: job.id, status: job.status, startedAt: job.startedAt, source: job.source,
+    ...(job.approvalTimedOut ? { approvalTimedOut: true } : {}),
+    events: job.events.filter(event => event.sequence > afterSequence), nextSequence: job.nextSequence, eventsDropped: afterSequence < firstSequence - 1,
     ...(job.permissions?.size ? { pendingApprovals: [...job.permissions.values()].map(({ id, event, deadline, url }) => ({ id, tool: event.tool_name, deadline, ...(url ? { url } : {}) })) } : {}),
     ...(job.finishedAt ? { finishedAt: job.finishedAt } : {}), ...(job.result ? { result: job.result } : {}) };
 }

@@ -55,6 +55,9 @@ await writeFile(mcpConfig, JSON.stringify({ mcpServers: {
   '3p-code-mode': { command: process.execPath },
 } }));
 await writeFile(policyPath, '{}');
+const { setProjectEnabled } = await import('./code-mode-settings.mjs');
+await setProjectEnabled(path.join(dir, 'fake-data'), project);
+await setProjectEnabled(dataDir, project);
 await writeFile(path.join(project, 'approval-hook.mjs'), `let input = '';
 for await (const part of process.stdin) input += part;
 const event = JSON.parse(input || '{}');

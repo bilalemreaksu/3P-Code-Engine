@@ -25,6 +25,25 @@ Script mevcut `%LOCALAPPDATA%\Claude-3p\claude_desktop_config.json` ve `%APPDATA
 
 Mevcut yapılandırma yedeklenir; eski `3p-code-engine-reader` kaydı kaldırılır. Diğer MCP kayıtları ve daha önce tanımlanmış `3p-code-mode` ortam değişkenleri korunur. Kaydedilen Node ve proje yolları kurulum anındaki mutlak yollardır; proje taşınırsa scripti yeni yerinden yeniden çalıştırın. Desktop'ı yeniden başlatıp araç listesinde `code_execute` bulunduğunu doğrulayın. Bu işlemler her Desktop/3P sürümü veya her modelle doğrulanmış değildir.
 
+## Etkinleştirme (projeye özel, güvenilen kullanıcı ayarı)
+
+Code Mode'un bir projede **etkin** olması, `permissionMode` seçiminden
+ayırt edilen ayrı bir ayardır: `auto` (veya başka bir mod) seçmek özelliği
+tek başına açmaz. Her proje, kullanıcı düzeyinde veri dizinindeki
+`settings.json` dosyasında açıkça etkinleştirilir; proje dizinindeki hiçbir
+dosya Code Mode'u kendiliğinden açamaz. Dosya yoksa özellik her yerde
+kapalıdır (fail-closed başlangıç durumu). Etkinleştiren açık eylem
+terminal komutudur (`node code-mode-cli.mjs --enable --cwd <proje>`, kapatmak
+için `--disable`) ya da o güvenilen dosyanın elle düzenlenmesidir; kurulum
+scripti etkinleştirme yapmaz. Bozuk bir dosya (geçersiz JSON, tanınmayan
+sürüm, hatalı `enabled` alanı) yürütmeyi ve resume'u açık hatayla reddeder:
+dosyayı düzeltin veya silin, sessiz sıfırlama yapılmaz.
+
+Bu yüzeydeki etkisi: `code_execute`/`code_start` ve `code_session_resume`,
+etkinleştirilmemiş bir projede `Code Mode is not enabled for <dizin>`
+gerekçesiyle reddedilir; Anthropic hesap veya model uygunluğu kontrolleri
+taklit edilmez.
+
 ## API
 
 ### Araç çağrısı kuralları ve PreToolUse
@@ -176,8 +195,16 @@ ile desteklenmeyen çıktı alanları (`systemMessage`, `terminalSequence`) ve
 
 ### İzin modları
 
+İzin modu, Code Mode'un o projede etkin olup olmadığını belirlemez;
+etkinleştirme ayrı bir güvenilen kullanıcı ayarıdır (yukarıdaki bölüm).
+
 `CODE_MODE_PERMISSION_MODE` sunucu ortamından ayarlanır. Çağrı yapan model
-bu ayarı araç parametresiyle değiştiremez. Kurulum scripti varsayılan olarak
+bu ayarı araç parametresiyle değiştiremez; bu yüzeyde mod çalışma anında
+değişmez ve hiçbir araç mod parametresi kabul etmez. Burada başlatılan her
+yürütme `source: 'mcp'` kaydeder: Desktop gerçek kullanıcı olayını bildiremez
+(kullanıcının gerçek eylemini modelin araç çağrısından ayırt edemez), bu yüzden
+süresi dolan onaylar bu yüzeyde yeniden kurulmaz ve iş bitene kadar ret olarak
+kalır. Kurulum scripti varsayılan olarak
 `auto` seçer; classifier verilmezse `ModelEndpoint`/`ModelName` veya kayıtlı
 model ayarları kullanılır. Endpoint/model yoksa yapılandırma yazılmaz.
 Doğrudan başlatılan MCP sunucusunda eski `rules` varsayılanı korunur.
@@ -192,26 +219,50 @@ Doğrudan başlatılan MCP sunucusunda eski `rules` varsayılanı korunur.
 | `bypassPermissions` | Mod ek onay istemez. Açık `deny`, `ask` ve hook'lar uygulanır. |
 
 `auto` için `CODE_MODE_CLASSIFIER_ENDPOINT` ve `CODE_MODE_CLASSIFIER_MODEL`
-zorunludur. İsteğe bağlı `CODE_MODE_CLASSIFIER_API_KEY` kullanılabilir.
+zorunludur. İsteğe bağlı `CODE_MODE_CLASSIFIER_API_KEY` ve
+`CODE_MODE_CLASSIFIER_TIMEOUT_MS` (varsayılan 30000) kullanılabilir.
 Sunucu JavaScript'i ve başlangıç dizinini yapılandırılan OpenAI uyumlu
-uç noktaya gönderir. Yalnızca `{"decision":"allow"}` sonucu yürütmeye izin
-verir. Hata ve geçersiz sonuç çağrıyı engeller.
+uç noktaya gönderir. Sınıflandırma, kod bloğu başına tam olarak bir kez ve
+TAM BLOKLA yapılır (araç başına parçalara bölünmez). Sınıflandırmaya giren
+yegâne girdiler çalışma dizini, kod ve — yalnızca terminalde — güvenilen
+kullanıcı niyeti (`userIntent`): insanın o turda yazdığı gerçek talep, ayrı bir
+veri alanıyla taşınır. `poll_event` turları (sentetik arka plan tamamlanma
+mesajları) ve MCP yüzeyi (gerçek kullanıcı olayı ayırt edilemeyen yüzey) niyet
+taşımaz; kod yorumları ve araç çıktıları bu alanı dolduramaz. Niyet asla
+kimlik bilgisi erişimi, dışa aktarma, yıkıcı/proje dışı işlem veya onay
+atlama yetkilendiremez. Yalnızca `{"decision":"allow"}` sonucu yürütmeye izin
+verir. Hata, bozuk ya da belirsiz sonuç çağrıyı engeller (fail-closed).
 
-Gerçek model doğrulaması ve kurulum (PowerShell):
+Gerçek model doğrulaması ve değerlendirme paketi:
 
 ```powershell
-npm run test:auto:live -- --endpoint http://127.0.0.1:9931/v1 --model model-adi
+npm run test:classifier:eval -- --endpoint http://127.0.0.1:9931/v1 --model model-adi
+npm run test:classifier:eval -- --offline
 .\install-code-mode.ps1 -Isolation docker -PermissionMode auto `
   -ClassifierEndpoint http://127.0.0.1:9931/v1 -ClassifierModel model-adi
 ```
 
-Canlı test gerçek MCP sunucusu üzerinden zararsız proje yazmasını ve yalnızca
-sentetik `.env` içeren kimlik bilgisi çıkarma örneğinin çalıştırılmadan reddini
-kontrol eder; eksik model/bağlantı veya beklenmeyen karar başarısızlıktır.
-`live-verification/auto-report.json` model, kaynak hash'i ve sonuçları kaydeder.
-Bu iki örnek modelin genel güvenlik doğruluğunu kanıtlamaz. Sınıflandırıcıya
-yardımcı API'ler ve normal proje işlerinin kapsamı sunucu tarafından açıklanır;
-kod içindeki yorumlar ek yetki veremez.
+Paket (`test-classifier-eval.mjs`) iki katmanda değerlendirir. Offline
+katman (`npm test` içinde, `--offline`; gerçek model gerektirmez) mock
+classifier'la tesisatı deterministik doğrular: bozuk yanıtlarda fail-closed
+ret (JSON dışı metin, boş içerik, HTTP 500, bağlantı kopması, yanıtsız
+endpointte süre sınırı), kod bloğu başına inceleme değişmezliği (tek istekte
+tam blok; ret gelince karışık blokta zararsız yarı bile çalışmaz),
+çalıştırılmayan kodun etkisizliği (dosya etkisi yok, kayıtlı işlemin yok) ve
+niyetin yalnızca gerçek kullanıcı turunda taşınması. Canlı katman (ör. Qwen
+OpenAI-uyumlu endpoint) senaryo ailelerinde modelin yargı kalitesini ölçer:
+normal proje işleri, hesaplanan yollar, dolaylı shell işlemleri, onay atlama
+girişimleri, kod yorumuyla yetki iddiası ve niyet etkileşimi; yalnızca
+sentetik dosya ve sırlar kullanılır. `test:auto:live` eski ad olarak kalır.
+
+`live-verification/classifier-eval-report.json` yanlış izin / yanlış ret
+sayılarını, reddedilen kodun etkisizlik kanıtını, model kimliğini (istenen
+model ile isteklerde gerçekten giden model alanı) ve kaynak hash'lerini
+(sınıflandırıcı, policy, runtime, paket) kaydeder. Yanlış izin veya bozuk
+yanıt canlı katmanı başarısız sayar; yanlış retler sayı olarak raporlanır.
+Bu senaryo aileleri bir model değerlendirmesidir, genel güvenlik iddiası
+değildir: sınıflandırıcıya yardımcı API'ler ve normal proje işlerinin
+kapsamı sunucu tarafından açıklanır; kod içindeki yorumlar ek yetki veremez.
 
 Aynı sunucuda yeni bir auto kod sınıflandırması başladığında, önceki çalışan
 auto işlerinin sınıflandırıcı onayı geçersizleşir. Sonraki değişiklik yapan
@@ -308,7 +359,11 @@ en fazla 64 eşzamanlı istek kabul eder; istek argümanları 256 KiB, yanıtlar
 
 `code_session_resume` çalışılan dizini, izin modunu ve son 100 yürütmenin
 iş kimliğini döndürür. Aynı `sessionId` ile `code_execute` çağrısına devam
-edilebilir. Kayıtlı oturumlarda `cwd` otomatik yüklenir ve izin modu eşleşir.
+edilebilir. Kayıtlı oturumlarda `cwd` otomatik yüklenir; kayıtlı izin modu bir
+kayıt tutucudur, kapı değildir: `CODE_MODE_PERMISSION_MODE` kayıtlı moddan
+farklı olsa bile devam edilir ve oturum bitişte yürüdüğü modu yeniden yazar.
+Devam için projenin Code Mode'ta hâlâ etkin olması yeterlidir; kapalı veya
+bozuk etkinleştirme ayarı gerekçesiyle açık hatadır.
 Her işin kod kaydı ve düzenleme önizlemesi `code_status` ile açılabilir.
 Yerel görüntüleyici de aynı kayıtları okur:
 
@@ -327,7 +382,7 @@ daraltılmıştır. Yukarı/aşağı ile iş seçilir, `Enter` ile kod genişlet
 düzenleme önizlemelerini ve sonucu gösterir. Bu yerel terminal görüntüleyicisidir;
 Desktop uygulamasının kendi kısayollarını veya konuşma arayüzünü değiştirmez.
 
-Çağrı parametreleri: `cwd` (mutlak başlangıç dizini), `code` (JavaScript kodu), `timeoutMs` (1000-600000, varsayılan 600000), isteğe bağlı `sessionId`. `return` veya son üst seviye ifadeyi kullanabilirsiniz; Acorn AST ayrıştırıcısı noktalı virgülsüz geçerli JavaScript'i, yorumları ve template literal'ları korur. Her çağrı yeni bir QuickJS motorudur; normal değişkenler çağrılar arasında korunmaz. Aynı `sessionId` ile JSON `state` başarılı çağrılar arasında diske kaydedilir (en fazla 256 KiB). Başarısız çağrılar yeni state'i kaydetmez; aynı oturuma eşzamanlı çağrı reddedilir. `code_session_delete` state'i temizler; aynı veri dizinini birden fazla sunucuyla eşzamanlı kullanmayın.
+Çağrı parametreleri: `cwd` (mutlak başlangıç dizini), `code` (JavaScript kodu), `timeoutMs` (1000-600000, varsayılan 600000), isteğe bağlı `sessionId`. `return` veya son üst seviye ifadeyi kullanabilirsiniz; Acorn AST ayrıştırıcısı noktalı virgülsüz geçerli JavaScript'i, yorumları ve template literal'ları korur. Her çağrı yeni bir QuickJS motorudur; normal değişkenler çağrılar arasında korunmaz. Aynı `sessionId` ile JSON `state` başarılı çağrılar arasında diske kaydedilir (en fazla 256 KiB). Kayıtlar geçici dosyaya yazılıp yeniden adlandırılarak atomik saklanır; hedefin geçici OS kilitlenmesi (Windows'ta gözlenen EPERM) ya da geçici dosyanın kaybı (ENOENT) kayıptan önce sınırlı sayıda denemede, her denemede taze bir geçici dosya ile aşılmaya çalışılır. Başarısız çağrılar yeni state'i kaydetmez; aynı oturuma eşzamanlı çağrı reddedilir. `code_session_delete` state'i temizler; aynı veri dizinini birden fazla sunucuyla eşzamanlı kullanmayın.
 
 - `await read(file)` — UTF-8 metin okur (1 MiB sınırı).
 - `await write(file, text)` — dosya oluşturur veya üzerine yazar.
@@ -337,6 +392,25 @@ Desktop uygulamasının kendi kısayollarını veya konuşma arayüzünü deği�
 - `await callMcp(server, tool, args)` - aşağıda yapılandırılan bir stdio MCP sunucusunun aracını çağırır.
 - `await listMcpServers()` ve `await listMcpTools(server)` - yapılandırılmış stdio sunucularını ve araçlarını keşfeder.
 - ``await $`komut`.text()`` - başarılı komutun çıktısını döndürür; başarısız komutta hata verir. ``await $`komut`.nothrow()`` - hata fırlatmadan sonuç nesnesini döndürür. Şablona eklenen her değer tek bir kabuk argümanı olarak tırnaklanır. Ortama göre Windows PowerShell veya POSIX shell kullanılır; tüm Claude Code sözdizimi ve davranışlarının eşdeğerliği garanti edilmez.
+
+Yürütme hataları yutulmaz:
+
+- Yardımcı çağrısı başarısız olduysa ve kod o hatayı `await`/`catch` ile
+  ele almadıysa, yürütme o hatayla reddedilir — bekletilmiş bir yardımcının
+  sessiz reddi sonucu "başarılı" gösterilmez.
+- `setTimeout` geri çağrısı fırlattıysa ve yürütme hâlâ aktifse hata aynı
+  kanaldan raporlanır. Yürütme tamamlandıktan sonra tetiklenecek unutulmuş
+  zamanlayıcılar çalıştırılmaz (kapanışta temizlenir).
+- Yardımcı sonucu JSON'a döndürülemezse (BigInt, döngüsel yapı) hata
+  gerekçesiyle bildirilir; seriye döktürmek `undefined` veren değerler
+  (fonksiyon, sembol) `null` olarak sınırdan geçer.
+- Bekleyen iş içinde bellek sınırı aşımı (64 MiB) ya da başka bir motor
+  hatası yürütmeyi o hata mesajıyla durdurur.
+- `timeoutMs` yalnızca çalışan kod için değil, bir yardımcıda bekleyip atıl
+  durumdaki yürütme için de geçerlidir: süre sonunda yürütme "süre aştı"
+  hatasıyla biter, motor bağlamı kapatılır ve daha sonra sonuçlanan bekleyen
+  işlemler sessizce yok sayılır — asılı süreç, çökme veya unhandled rejection
+  bırakılmaz.
 
 `code_start` arka planda kod başlatır; `code_status` iş durumunu/sonucunu ve `log`, komut çıktısı veya yardımcı işlem olaylarını alır. Sonraki sorguda `afterSequence` ile yalnızca yeni olaylar istenebilir. Olaylar boyut ve sayı sınırlarına tabidir; kayıp olay ve kesilmiş çıktı ayrıca bildirilir. Bu, sürekli itilen bir yayın değil, istemcinin aralıklarla sorgulamasıdır. `code_cancel` işi durdurmayı dener. Tamamlanan sonuçlar ve kod kaydı yeniden başlatmadan sonra iş kimliğiyle okunabilir; yeniden başlatma sırasında çalışan işler devam ettirilmez, sonuçları bilinmeyen `interrupted` olarak görünür. `code_job_delete` tamamlanmış işin saklanan kaydını siler. Arka plan limiti iki saattir. Durdurma, kendini ayırmış tüm alt süreçlerin sonlandırılacağını garanti etmez.
 

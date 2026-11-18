@@ -6,7 +6,8 @@ import { runHooks, validateHooks } from './code-mode-hooks.mjs';
 import { send as channelSend, onMessage } from './code-mode-channel.mjs';
 import { matchesRule, commandIsReadOnly } from './code-mode-rules.mjs';
 
-const permissionModes = ['rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
+export const permissionModes = ['rules', 'default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
+export const backgroundModes = ['rules', 'auto', 'bypassPermissions'];
 export function getPermissionMode() {
   const mode = process.env.CODE_MODE_PERMISSION_MODE || 'rules';
   if (!permissionModes.includes(mode)) throw new Error('Invalid CODE_MODE_PERMISSION_MODE');

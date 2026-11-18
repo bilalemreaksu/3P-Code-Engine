@@ -19,6 +19,13 @@ onayından sonra da uygulanır; çalışma anında hesaplanan dosya/komutlar
 araç denetimine girer. Yeni kodun sınıflandırılması önceki çalışan auto
 kodunun inceleme onayını kaldırır; gereken sonraki çağrılar insan onayı ister.
 
+Oturum kendi izin modunu taşır: başlangıç modu oturum açılırken yazılır, güncel
+mod çalışma anında değişebilir. `Shift+Tab` modu sırayla değiştirir, `/mode`
+güncel modu gösterir, `/mode <mod>` modu açıkça kurar; arka plan uygunluğu
+(`rules`, `auto`, `bypassPermissions`) modla birlikte yeniden hesaplanır ve
+başlıkta görünür. Modu yalnızca terminaldeki insan değiştirebilir; modelin
+bu konuda aracı yoktur.
+
 Desktop kurulumundaki model, classifier ve MCP ayarlarını kullanmak için:
 
 ```powershell
@@ -44,6 +51,31 @@ desteklenir. Docker ayrıca kabuk süreçlerini proje mount'u olan Linux
 konteynerine taşır. Docker olmadan izin verilen kabuk komutları host
 hesabının yetkileriyle çalışır; JavaScript motoru yine QuickJS'tir.
 
+## Etkinleştirme (bağımsız, güvenilen ayar)
+
+Code Mode'un bir projede **etkin** olması izin modu seçiminden ayrıdır:
+`auto` (varsayılan) modu seçmek özelliği açmaz. Oturum başlatmak için
+proje, kullanıcı düzeyindeki güvenilen ayar dosyasında açıkça
+etkinleştirilmiş olmalıdır — proje dizinindeki hiçbir dosya Code Mode'u
+kendiliğinden açamaz:
+
+```powershell
+npm run code -- --enable --cwd C:\Projects\app
+```
+
+- Ayar, `CODE_MODE_DATA_DIR` altında `settings.json` olarak saklanır
+  (varsayılan `%LOCALAPPDATA%\3p-code-engine`); kullanıcı düzeyi bir
+  dosyadır. Kapatmak `--disable --cwd <proje>` ile yapılır.
+- Ayar dosyası yoksa özellik her yerde kapalıdır (fail-closed başlangıç
+  durumu). Bozuk dosya (geçersiz JSON, tanınmayan sürüm, hatalı `enabled`
+  alanı) oturum başlangıcını açık hatayla reddeder: dosyayı düzeltin veya
+  silin, sessiz sıfırlama yapılmaz.
+- Etkinleştirilmemiş projede terminal başlatılamaz ve resume edilemez;
+  hata gerekçesiyle birlikte etkinleştirme yolunu gösterir. Resume ayrıca
+  Code Mode işaretini doğrular: dosya yoksa, bozuksa, Code Mode oturumu
+  değilse ya da sürümü desteklenmiyorsa her biri ayrı gerekçesiyle açık
+  hata verir.
+
 ## Konuşma ve kod kaydı
 
 - Normal görünümde model mesajları, araç işlemleri ve edit önizlemeleri görünür.
@@ -52,7 +84,12 @@ hesabının yetkileriyle çalışır; JavaScript motoru yine QuickJS'tir.
 - `/status` iş durumlarını gösterir. İnsan onayı gerektiğinde onay sayfasının
   bağlantısı ve son tarih terminalde görünür; model karar veremez.
 - Model `background:true` ile uzun kodu başlatırsa konuşmaya devam edilebilir.
-  Tamamlanma sonucu hook denetiminden sonra modele `poll_event` olarak verilir.
+  Tamamlanma sonucu hook denetiminden sonra modele `poll_event` olarak verilir;
+  bu sentetik bir turdur, işin `source` kaydı `poll_event` olur ve süresi dolan
+  onayları yeniden kurmaz.
+- Süresi dolan bir onay yalnızca gerçek kullanıcı mesajıyla yeniden kurulur:
+  aynı işin sonraki denemesi tekrar onay ister. Modelin başlattığı kod bu
+  durumu değiştiremez.
 - `Ctrl+C` çalışan işleri iptal eder; `/exit` veya boş satırda `Ctrl+D` çıkar.
 
 Ön plan kodu varsayılan olarak ve en fazla 10 dakika, arka plan kodu 2 saat
@@ -63,10 +100,17 @@ Konuşma, çalışma dizini, izin modu, iş kimlikleri ve Code Mode işareti ver
 dizininde `chat-<hash>.json` olarak saklanır. Çıkışta devam komutu gösterilir:
 
 ```powershell
-npm run code -- --resume OTURUM_KIMLIGI --endpoint http://127.0.0.1:9931/v1 --model model-adi --permission-mode auto
+npm run code -- --resume OTURUM_KIMLIGI --endpoint http://127.0.0.1:9931/v1 --model model-adi
 ```
 
-Oturum aynı dizin ve izin moduyla açılır. Ön plan kodunun açık JSON `state`
+Oturum saklanan dizin ve izin moduyla açılır: başlangıç ortam değişkeni devam
+eden oturumu artık sabitlemez. Saklanan mod bir kayıt tutucudur, kapı
+değildir — ortam değişkeni saklanan moddan farklı olsa bile devam edilir ve
+oturum bitişte yürüdüğü modu yeniden yazar; açık `--permission-mode` ise
+güvendirilen bir insan tercihi olarak oturumu o moda taşar (terminaldeki
+`/mode` ile aynı), hata değildir. Devam için projenin Code Mode'ta hâlâ
+etkin olması yeterlidir. Ön plan
+kodunun açık JSON `state`
 değeri korunur; normal JavaScript değişkenleri tutulmaz. Çıkışta çalışan
 işler iptal edilir; sunucu çökmesinden sonra çalışan iş yeniden yürütülmez.
 Konuşma dosyaları düz JSON'dur; otomatik silinmez. `code_session_delete`

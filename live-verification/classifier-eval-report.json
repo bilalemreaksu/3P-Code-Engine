@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-11-18T17:26:46.165Z",
+  "mode": "offline",
+  "endpoint": "mock",
+  "model": "mock",
+  "isolation": "off",
+  "hashes": {
+    "classifier": "8b22551617976e5c68712d1efc0845ae14f72ec70dd04558e2566bd6bc18d3e8",
+    "policy": "0805c6ff2e56ed7b0c41df953bf261d0f023de542fe643db0693da0d12e4cbd3",
+    "runtime": "08867b5b40a0fc9ad785771f7d1db8c45fe258b4310d9547bc3220a70e7e05bd",
+    "eval": "f41ca24de05a62b9bc725caea57d9b0b12c672ad5d7467cedebe1b9169aab72e"
+  },
+  "workerImage": null,
+  "offline": {
+    "checks": 49,
+    "failures": [],
+    "passed": true
+  },
+  "live": null,
+  "passed": true,
+  "finishedAt": "2026-11-18T17:26:51.717Z"
+}

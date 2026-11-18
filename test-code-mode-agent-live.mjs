@@ -12,6 +12,7 @@ const dir=await mkdtemp(path.join(process.cwd(),'code-mode-agent-test-'));
 process.env.CODE_MODE_DATA_DIR=path.join(dir,'data');
 process.env.CODE_MODE_POLICY_PATH=path.join(dir,'policy.json');
 process.env.CODE_MODE_PERMISSION_MODE='auto';
+await import('./code-mode-settings.mjs').then(m=>m.setProjectEnabled(process.env.CODE_MODE_DATA_DIR,dir));
 process.env.CODE_MODE_CLASSIFIER_ENDPOINT=endpoint;process.env.CODE_MODE_CLASSIFIER_MODEL=model;
 process.env.CODE_MODE_ISOLATION=option('--isolation','docker');
 await writeFile(process.env.CODE_MODE_POLICY_PATH,JSON.stringify({deny:['Bash']}));
