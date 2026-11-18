@@ -127,8 +127,9 @@ doğrulanmamış, koşullu veya çalıştırılmamış satır PASS sayılmaz.
 | Hook kararları, hata/zaman aşımı, `onFailure` (command/HTTP/MCP) | v0.12 tablosu | `code-mode-hooks.mjs` | `test-code-mode-hooks.mjs` | PASS |
 | `updatedInput`/`additionalContext`, `policy.hooks` adaptörü, `allow` önceliği | v0.12 tablosu | `code-mode-policy.mjs` | `test-code-mode-hooks.mjs`, `test-code-mode-rules.mjs`, `test-code-mode.mjs` | PASS |
 | `UserPromptSubmit` çıktı engelleme (arka plan işi) | v0.12 tablosu | `code-mode-worker.mjs` (`holdOutput` → `check.output`) | `test-code-mode-hooks.mjs` (block sözleşmesi), `test-code-mode.mjs`, `test-terminal-flow.mjs` (canary hook'a ulaşır; terminale ve modele ulaşmaz) | PASS |
-| Auto: kod bloğu başına tek sınıflandırma; hata/bozuk yanıtta fail-closed | v0.12 tablosu | `code-mode-classifier.mjs` | `test-code-mode.mjs`, `test-code-mode-agent.mjs`, `test-classifier-eval.mjs` (çevrimdışı: bozuk yanıtlar, süre, karışık blok) | PASS (çevrimdışı); canlı endpoint katmanı koşulmadı (bu ortamda kimlik bilgisi yok) |
-| Güvenilen kullanıcı niyeti yalnızca terminalin gerçek kullanıcı turunda | Görev 6 gereksinimi | `classifyCode(…, userIntent)`; ajan yalnızca `user` turunda geçirir | `test-classifier-eval.mjs` (O10–O12) | PASS (çevrimdışı); canlı katman (L16–L18) koşulmadı |
+| Auto: kod bloğu başına tek sınıflandırma; hata/bozuk yanıtta fail-closed | v0.12 tablosu | `code-mode-classifier.mjs` | `test-code-mode.mjs`, `test-code-mode-agent.mjs`, `test-classifier-eval.mjs` (çevrimdışı: bozuk yanıtlar, süre, karışık blok) | PASS (çevrimdışı) + PASS (canlı, 18 Kasım 2026, tam senaryo seti): gerçek endpointte (yerel proxy, anthropic/claude-opus-5-5, Docker izolasyon) 19/19 senaryo (L01–L18), 0 yanlış izin / 0 yanlış ret / 0 bozuk (rapor: `live-verification/classifier-eval-report.json`); montaj düzeltmesi sonrası `/work` mutlak yolu → allow, proje dışı mutlak yol hâlâ deny; Qwen model katmanı hâlâ koşulmadı |
+| Güvenilen kullanıcı niyeti yalnızca terminalin gerçek kullanıcı turunda | Görev 6 gereksinimi | `classifyCode(…, userIntent)`; ajan yalnızca `user` turunda geçirir | `test-classifier-eval.mjs` (O10–O12) | PASS (çevrimdışı); canlı: MCP yüzeyinin niyet taşımaması doğrulandı (yalnızca statik taban uygulandı — mutlak yolun ret kararı bunun kanıtı); L16–L18 canlıda koşuldu (niyet canlı sınıflandırcıya ulaştı, secret niyeti → deny, poll_event → niyetsiz) |
+| Canlı yüzey ergonomisi: `write` ara dizinleri kontrol SONRASI otomatik oluşturur, `run` sonucu `ok` taşır, sınıflandırıcı Docker `/work` montajını bilir | canlı doğrulama hataları (18 Kasım 2026) | `code-mode-worker.mjs`, `code-mode-classifier.mjs` (prompt) | `test-code-mode.mjs` (iç içe yazma + ret ağaç/dosya bırakmaz, `run.ok`), `test-classifier-eval.mjs` (O13: prompt montaj bilgisini taşır) | PASS (çevrimdışı) + canlı: iç içe yazma ve `ok` yüzeyde ölçüldü; canlı endpointte yeni promptla `/work` yolu allow, proje dışı mutlak yol hâlâ deny; app yeniden başlatması sonrası düzeltme çalışan sunucuda aktif — `/work` yolu canlı yüzeyde allow ve yürütüldü |
 | Eski auto onayının yeni kodla kaybı | v0.12 tablosu | `execution-manager.mjs` (`autoEpoch`/`reviewValid`) | `test-execution-manager.mjs`, `test-code-mode.mjs` | PASS |
 | Onay geri sayımı, broker UI (köken doğrulaması), tek kullanımlık nonce, hash zincirli denetim, süre/iptal, yeniden başlatma | v0.12 tablosu | `approval-broker.mjs`, `approval-client.mjs` | `test-approval.mjs` | PASS |
 | Model kendi onayını veremez | v0.12 tablosu | ajan araç listesi; QuickJS brokere erişemez | `test-code-mode.mjs` (nonce modele ulaşmaz; tüketilen nonce → 409), `test-code-mode-host.mjs` (sahte izin) | PASS |
@@ -144,7 +145,7 @@ doğrulanmamış, koşullu veya çalıştırılmamış satır PASS sayılmaz.
 | Canlı terminal örneği "iki paralel okuma" | eski canlı araç | — | `test-code-mode-agent-live.mjs` | **Paralellik kanıtı değil** — yalnızca iki işlem kaydı; paralellik kanıtı ilk satırda; canlı katman koşulmadı |
 | Docker OS izolasyonu (zorunlu) | v0.12 tablosu | `execution-manager.mjs` (konteyner motoru) | `test-code-mode-isolation.mjs --require-docker` (motor/build yok → FAIL); CI `docker-isolation` işi | PASS — bu makinede motor (29.9.3) mevcut, `npm run test:isolation:required` koştu; CI işinde motor/build yokluğu SKIP değil hatadır |
 | Windows + Linux runtime/agent CI kapsamı | Görev 7 gereksinimi | `.github/workflows/ci.yml` (test matrisi: `windows-latest`, `ubuntu-latest`) | `npm test` her iki OS'te | Değişiklik yapıldı; Linux koşusu yalnızca CI'da (bu makinede doğrulanmadı) |
-| Desktop UI (Claude Desktop 3P yüzeyi) | v0.12 tablosu (Desktop satırı) | bu sürümde yeni UI kodu yok | yeni doğrulama yapılmadı | **Doğrulanmadı** — 18 Kasım 2026 raporu tarihsel kayıttır (aşağıda), mevcut sürümün kanıtı değildir |
+| Desktop UI (Claude Desktop 3P yüzeyi) | v0.12 tablosu (Desktop satırı) | bu sürümde yeni UI kodu yok | canlı doğrulama (18 Kasım 2026, v0.14 ağacı): bu oturumun 3p-code-mode MCP bağlantısı | **PASS (canlı)** — yürütme ve yanıt zarfı; etkinleştirme kapısı (birebir ret mesajı + `--enable` ile açılış, çalışan sunucuya iş-işi politika/ayar okumasıyla yansıdı); docker izolasyonu (`/work` dosya etkisi hosttan bağımsız doğrulandı); canlı auto sınıflandırma (allow/deny kararları); arka plan çıktı engelleme (canary → `outputBlocked` + olaylar teslim edilmedi, temiz kontrol → tamamlandı; hook tarafı hosttan bağımsız kayda alındı); state/oturum sürekliliği (iş başına yeni işçiyle); `code_status`/`code_session_resume`. Bu yüzeyde koşulmadı: auto modda onay kuyruğu oluşmadığından insan onay UI döngüsü (broker döngüsü test satırlarında), Ctrl+O görüntüleyici (terminal özelliği), Qwen canlı katmanı (endpoint yerel proxy, claude-opus-5-5) |
 
 ## Doğrulama
 
@@ -190,7 +191,17 @@ sayıları, reddedilen kodun etkisizlik kanıtı, model kimliği (istenen model 
 isteklerde giden `model` alanı) ve kaynak hash'leri (classifier, policy,
 runtime, paket). Bu bir model değerlendirmesidir; genel güvenlik iddiası
 değildir. Aşağıdaki Desktop raporu v0.11 öncesindeki canlı
-denemenin kaydıdır; yeni testler onun yerine Desktop UI testi sayılmaz.
+denemenin tarihsel kaydıdır. Mevcut sürüm ayrıca 18 Kasım 2026'da canlı
+Desktop 3P yüzeyinde (bu oturumun 3p-code-mode MCP bağlantısı, v0.14
+ağacı) doğrulandı: yürütme, docker /work dosya etkisi (hosttan bağımsız
+kanıt), canlı auto sınıflandırma kararları, arka plan çıktı engelleme ve
+state/oturum sürekliliği (matris Desktop satırı). Auto modda sınıflandırma
+kararı sonrası onay kuyruğu oluşmadığı için insan onay UI döngüsü bu
+yüzeyde koşulmadı; broker döngüsü test satırlarında kapsamdadır. Canlı sınıflandırıcı senaryo setinin tamamı
+(L01–L18) da 18 Kasım 2026'da yerel endpointte (anthropic/claude-opus-5-5, Docker
+izolasyon) koşuldu: 19/19 senaryo, 0 yanlış izin / yanlış ret / bozuk; canlı yüzey
+ergonomi düzeltmeleri app yeniden başlatması sonrası çalışan sunucuda aktif
+(``/work`` yolları yüzeyde allow ve yürütüldü). Qwen model katmanı koşulmadı.
 
 `npm test`: gerçek stdio MCP istemcisi/sunucusu, kontrollü yerel sınıflandırıcı,
 HTTP hook sunucusu ve MCP hook aracıyla bütünleşim testleri. Docker motoru
