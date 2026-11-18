@@ -63,6 +63,10 @@ try {
   // source is 'mcp' because Desktop cannot report real user events.
   await assert.rejects(async () => startExecution({ cwd: dir, code: 'return 1', mode: 'yolo' }), /Invalid permission mode/);
   await assert.rejects(async () => startExecution({ cwd: dir, code: 'return 1', source: 'bogus' }), /Invalid execution source/);
+  // A new session must carry its own absolute cwd; the error message points
+  // the caller at both escapes: pass cwd, or continue an existing sessionId.
+  await assert.rejects(async () => startExecution({ code: 'return 1' }),
+    /cwd must be an absolute path: pass cwd for a new session, or pass a sessionId to continue an existing session/);
   const sourced = await startExecution({ cwd: dir, code: 'return 7', mode: 'rules', source: 'mcp' });
   assert.equal((await sourced.promise).result, '7');
   assert.equal(getJob(sourced.id).source, 'mcp');

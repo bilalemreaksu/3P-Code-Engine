@@ -272,7 +272,7 @@ export async function startExecution({ cwd, code, timeoutMs, sessionId, decide, 
   if (mode !== 'autoApprove') approvalTimeoutMs();
   const saved = sessionId ? getSession(sessionId) : undefined;
   cwd ??= saved?.cwd;
-  if (!cwd || !path.isAbsolute(cwd)) throw new Error('cwd must be an absolute path for a new session');
+  if (!cwd || !path.isAbsolute(cwd)) throw new Error('cwd must be an absolute path: pass cwd for a new session, or pass a sessionId to continue an existing session');
   cwd = path.normalize(cwd);
   // Initial state check: Code Mode runs only for projects the user enabled
   // in the trusted user settings; a corrupted settings file fails closed.
